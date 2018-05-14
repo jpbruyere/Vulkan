@@ -29,6 +29,7 @@
 #include "VulkanBuffer.hpp"
 #include "VulkanTexture.hpp"
 #include "VulkanModel.hpp"
+#include "ModelGroup.hpp"
 
 #include <btBulletDynamicsCommon.h>
 #include <BulletCollision/Gimpact/btGImpactCollisionAlgorithm.h>
@@ -38,7 +39,7 @@
 
 #define INSTANCE_COUNT 16
 
-struct Material {
+struct OldMaterial {
     // Parameter block used as push constant block
     struct PushBlock {
         float roughness = 0.0f;
@@ -47,8 +48,8 @@ struct Material {
         float r, g, b;
     } params;
     std::string name;
-    Material() {};
-    Material(std::string n, glm::vec3 c) : name(n) {
+    OldMaterial() {};
+    OldMaterial(std::string n, glm::vec3 c) : name(n) {
         params.r = c.r;
         params.g = c.g;
         params.b = c.b;
@@ -106,20 +107,10 @@ public:
         vks::VERTEX_COMPONENT_UV,
     });
 
-    struct InstanceData {
-        uint32_t texIndex;
-        glm::mat4 mat;
-    };
-    vks::Buffer instanceBuffer;
-
-    struct Meshes {
-        vks::Model skybox;
-        std::vector<vks::Model> objects;
-        int32_t objectIndex = 0;
-    } models;
+    vks::Model skybox;
 
     struct {
-        vks::Buffer object;
+        vks::Buffer matrices;
         vks::Buffer skybox;
         vks::Buffer params;
     } uniformBuffers;
@@ -143,7 +134,7 @@ public:
     } pipelines;
 
     struct {
-        VkDescriptorSet object;
+        VkDescriptorSet matrices;
         VkDescriptorSet skybox;
     } descriptorSets;
 
@@ -151,7 +142,7 @@ public:
     VkDescriptorSetLayout descriptorSetLayout;
 
     // Default materials to select from
-    std::vector<Material> materials;
+    std::vector<OldMaterial> materials;
     int32_t materialIndex = 0;
 
     std::vector<std::string> materialNames;
@@ -170,19 +161,19 @@ public:
         camera.setPosition({ 0.55f, 0.85f, 2.0f });
 
         // Setup some default materials (source: https://seblagarde.wordpress.com/2011/08/17/feeding-a-physical-based-lighting-mode/)
-        materials.push_back(Material("Gold", glm::vec3(1.0f, 0.765557f, 0.336057f)));
-        materials.push_back(Material("Copper", glm::vec3(0.955008f, 0.637427f, 0.538163f)));
-        materials.push_back(Material("Chromium", glm::vec3(0.549585f, 0.556114f, 0.554256f)));
-        materials.push_back(Material("Nickel", glm::vec3(0.659777f, 0.608679f, 0.525649f)));
-        materials.push_back(Material("Titanium", glm::vec3(0.541931f, 0.496791f, 0.449419f)));
-        materials.push_back(Material("Cobalt", glm::vec3(0.662124f, 0.654864f, 0.633732f)));
-        materials.push_back(Material("Platinum", glm::vec3(0.672411f, 0.637331f, 0.585456f)));
+        materials.push_back(OldMaterial("Gold", glm::vec3(1.0f, 0.765557f, 0.336057f)));
+        materials.push_back(OldMaterial("Copper", glm::vec3(0.955008f, 0.637427f, 0.538163f)));
+        materials.push_back(OldMaterial("Chromium", glm::vec3(0.549585f, 0.556114f, 0.554256f)));
+        materials.push_back(OldMaterial("Nickel", glm::vec3(0.659777f, 0.608679f, 0.525649f)));
+        materials.push_back(OldMaterial("Titanium", glm::vec3(0.541931f, 0.496791f, 0.449419f)));
+        materials.push_back(OldMaterial("Cobalt", glm::vec3(0.662124f, 0.654864f, 0.633732f)));
+        materials.push_back(OldMaterial("Platinum", glm::vec3(0.672411f, 0.637331f, 0.585456f)));
         // Testing materials
-        materials.push_back(Material("White", glm::vec3(1.0f)));
-        materials.push_back(Material("Dark", glm::vec3(0.1f)));
-        materials.push_back(Material("Black", glm::vec3(0.0f)));
-        materials.push_back(Material("Red", glm::vec3(1.0f, 0.0f, 0.0f)));
-        materials.push_back(Material("Blue", glm::vec3(0.0f, 0.0f, 1.0f)));
+        materials.push_back(OldMaterial("White", glm::vec3(1.0f)));
+        materials.push_back(OldMaterial("Dark", glm::vec3(0.1f)));
+        materials.push_back(OldMaterial("Black", glm::vec3(0.0f)));
+        materials.push_back(OldMaterial("Red", glm::vec3(1.0f, 0.0f, 0.0f)));
+        materials.push_back(OldMaterial("Blue", glm::vec3(0.0f, 0.0f, 1.0f)));
 
         settings.overlay = true;
 
@@ -228,17 +219,13 @@ public:
             delete balls[i].body;
         }
 
-        instanceBuffer.unmap();
-        instanceBuffer.destroy();
+        //models->instanceBuff.unmap();
+        modGrp->destroy();
+        delete modGrp;
 
-        texArray.destroy();
+        skybox.destroy();
 
-        for (auto& model : models.objects) {
-            model.destroy();
-        }
-        models.skybox.destroy();
-
-        uniformBuffers.object.destroy();
+        uniformBuffers.matrices.destroy();
         uniformBuffers.skybox.destroy();
         uniformBuffers.params.destroy();
 
@@ -293,40 +280,28 @@ public:
             if (displaySkybox)
             {
                 vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.skybox, 0, NULL);
-                vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &models.skybox.vertices.buffer, offsets);
-                vkCmdBindIndexBuffer(drawCmdBuffers[i], models.skybox.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &skybox.vertices.buffer, offsets);
+                vkCmdBindIndexBuffer(drawCmdBuffers[i], skybox.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
                 vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.skybox);
-                vkCmdDrawIndexed(drawCmdBuffers[i], models.skybox.indexCount, 1, 0, 0, 0);
+                vkCmdDrawIndexed(drawCmdBuffers[i], skybox.indexCount, 1, 0, 0, 0);
             }
 
             // Objects
-            vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.object, 0, NULL);
-            vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &models.objects[0].vertices.buffer, offsets);
-            vkCmdBindIndexBuffer(drawCmdBuffers[i], models.objects[0].indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-            vkCmdBindVertexBuffers(drawCmdBuffers[i], 1, 1, &instanceBuffer.buffer, offsets);
+            vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.matrices, 0, NULL);
+            vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &modGrp->vertices.buffer, offsets);
+            vkCmdBindIndexBuffer(drawCmdBuffers[i], modGrp->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdBindVertexBuffers(drawCmdBuffers[i], 1, 1, &modGrp->instanceBuff.buffer, offsets);
             vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.pbr);
 
-            Material mat = materials[materialIndex];
+            OldMaterial mat = materials[materialIndex];
             mat.params.roughness = 0.1f;// 1.0f-glm::clamp((float)x / (float)objcount, 0.005f, 1.0f);
             mat.params.metallic = 0.2f;// glm::clamp((float)x / (float)objcount, 0.005f, 1.0f);
             mat.params.specular = 0.9f;
 
             //vkCmdPushConstants(drawCmdBuffers[i], pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::vec3), &pos);
-            vkCmdPushConstants(drawCmdBuffers[i], pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(glm::vec3), sizeof(Material::PushBlock), &mat);
+            vkCmdPushConstants(drawCmdBuffers[i], pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(glm::vec3), sizeof(OldMaterial::PushBlock), &mat);
 
-            //draw balls
-            vkCmdDrawIndexed(drawCmdBuffers[i], models.objects[0].indexCount, 15, 0, 0, 0);
-            //draw table
-            mat.params.roughness = 0.8f;// 1.0f-glm::clamp((float)x / (float)objcount, 0.005f, 1.0f);
-            mat.params.metallic = 0.001f;// glm::clamp((float)x / (float)objcount, 0.005f, 1.0f);
-            mat.params.specular = 0.01f;
-            vkCmdPushConstants(drawCmdBuffers[i], pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(glm::vec3), sizeof(Material::PushBlock), &mat);
-
-            vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &models.objects[1].vertices.buffer, offsets);
-            vkCmdBindIndexBuffer(drawCmdBuffers[i], models.objects[1].indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-
-            vkCmdDrawIndexed(drawCmdBuffers[i], models.objects[1].indexCount, 1, 0, 0, 15);
-
+            modGrp->buildCommandBuffer(drawCmdBuffers[i]);
 
             vkCmdEndRenderPass(drawCmdBuffers[i]);
 
@@ -335,21 +310,31 @@ public:
     }
 
     uint32_t texSize = 1024;
-    vks::Texture2DArray texArray;
+
+    vks::ModelGroup* modGrp;
 
     void loadAssets()
     {
+        modGrp = new vks::ModelGroup(vulkanDevice, queue);
+
+        int modBall = modGrp->addModel(getAssetPath() + "models/geosphere1.obj", gameTypes[0].ballSize);
+        int modPlate = modGrp->addModel(getAssetPath() + "models/table.obj", 0.1f);
+
         // Skybox
-        models.skybox.loadFromFile(getAssetPath() + "models/cube.obj", vertexLayout, 1.0f, vulkanDevice, queue);
-        // Objects
-        vks::Model mBall;
-        mBall.loadFromFile(getAssetPath() + "models/geosphere1.obj", vertexLayout, gameTypes[0].ballSize, vulkanDevice, queue);
-        models.objects.push_back(mBall);
-        vks::Model mTable;
-        mTable.loadFromFile(getAssetPath() + "models/table.obj", vertexLayout, 0.1f, vulkanDevice, queue);
-        models.objects.push_back(mTable);
+        skybox.loadFromFile(getAssetPath() + "models/cube.obj", vertexLayout, 1.0f, vulkanDevice, queue);
 
         textures.environmentCube.loadFromFile(getAssetPath() + "textures/hdr/pisa_cube.ktx", VK_FORMAT_R16G16B16A16_SFLOAT, vulkanDevice, queue);
+
+
+
+        for (int i = 0; i < 15; i++){
+            modGrp->addInstance(modBall, i);
+            modGrp->addMaterial(i,0.1f,0.001f,0);
+        }
+
+        modGrp->addMaterial(15,0.001f,0.8f,0);
+        modGrp->addInstance(modPlate, 15);
+
 
         std::vector<std::string> mapDic = {
             getAssetPath() + "1.png",
@@ -370,24 +355,7 @@ public:
             getAssetPath() + "green1.png",
         };
 
-        texArray.buildFromImages (mapDic, texSize, VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
-
-        VK_CHECK_RESULT(vulkanDevice->createBuffer(
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            &instanceBuffer, INSTANCE_COUNT * sizeof(InstanceData)));
-
-        instanceBuffer.map();
-
-        InstanceData* data = (InstanceData*)instanceBuffer.mapped;
-
-        for (int i = 0; i < INSTANCE_COUNT; i++) {
-            data[i].texIndex = i;
-            data[i].mat = glm::mat4();//sglm::translate(glm::mat4(), glm::vec3(i*0.5,-1,0));
-        }
-        //table
-        //data[INSTANCE_COUNT-1].texIndex = 0;
-        data[INSTANCE_COUNT-1].mat = glm::mat4();//glm::translate(glm::mat4(), glm::vec3(0,0,0));
+        modGrp->prepare(mapDic, texSize);
 
     }
 
@@ -417,14 +385,14 @@ public:
         VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayout, 1);
 
         // Objects
-        VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.object));
+        VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.matrices));
         std::vector<VkWriteDescriptorSet> writeDescriptorSets = {
-            vks::initializers::writeDescriptorSet(descriptorSets.object, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.object.descriptor),
-            vks::initializers::writeDescriptorSet(descriptorSets.object, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, &uniformBuffers.params.descriptor),
-            vks::initializers::writeDescriptorSet(descriptorSets.object, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, &textures.irradianceCube.descriptor),
-            vks::initializers::writeDescriptorSet(descriptorSets.object, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &textures.lutBrdf.descriptor),
-            vks::initializers::writeDescriptorSet(descriptorSets.object, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4, &textures.prefilteredCube.descriptor),
-            vks::initializers::writeDescriptorSet(descriptorSets.object, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5, &texArray.descriptor),
+            vks::initializers::writeDescriptorSet(descriptorSets.matrices, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.matrices.descriptor),
+            vks::initializers::writeDescriptorSet(descriptorSets.matrices, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, &uniformBuffers.params.descriptor),
+            vks::initializers::writeDescriptorSet(descriptorSets.matrices, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, &textures.irradianceCube.descriptor),
+            vks::initializers::writeDescriptorSet(descriptorSets.matrices, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &textures.lutBrdf.descriptor),
+            vks::initializers::writeDescriptorSet(descriptorSets.matrices, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4, &textures.prefilteredCube.descriptor),
+            vks::initializers::writeDescriptorSet(descriptorSets.matrices, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5, &modGrp->texArray.descriptor),
         };
         vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, NULL);
 
@@ -473,7 +441,7 @@ public:
         // Push constant ranges
         std::vector<VkPushConstantRange> pushConstantRanges = {
             vks::initializers::pushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, sizeof(glm::vec3), 0),
-            vks::initializers::pushConstantRange(VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(Material::PushBlock), sizeof(glm::vec3)),
+            vks::initializers::pushConstantRange(VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(OldMaterial::PushBlock), sizeof(glm::vec3)),
         };
         pipelineLayoutCreateInfo.pushConstantRangeCount = 2;
         pipelineLayoutCreateInfo.pPushConstantRanges = pushConstantRanges.data();
@@ -498,7 +466,7 @@ public:
         // Binding description
         std::vector<VkVertexInputBindingDescription> vertexInputBindings = {
             vks::initializers::vertexInputBindingDescription(0, vertexLayout.stride(), VK_VERTEX_INPUT_RATE_VERTEX),
-            vks::initializers::vertexInputBindingDescription(1, sizeof(InstanceData), VK_VERTEX_INPUT_RATE_INSTANCE)
+            vks::initializers::vertexInputBindingDescription(1, sizeof(vks::ModelGroup::InstanceData), VK_VERTEX_INPUT_RATE_INSTANCE)
         };
 
         // Attribute descriptions
@@ -1062,9 +1030,9 @@ public:
 
                 VkDeviceSize offsets[1] = { 0 };
 
-                vkCmdBindVertexBuffers(cmdBuf, 0, 1, &models.skybox.vertices.buffer, offsets);
-                vkCmdBindIndexBuffer(cmdBuf, models.skybox.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(cmdBuf, models.skybox.indexCount, 1, 0, 0, 0);
+                vkCmdBindVertexBuffers(cmdBuf, 0, 1, &skybox.vertices.buffer, offsets);
+                vkCmdBindIndexBuffer(cmdBuf, skybox.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(cmdBuf, skybox.indexCount, 1, 0, 0, 0);
 
                 vkCmdEndRenderPass(cmdBuf);
 
@@ -1457,9 +1425,9 @@ public:
 
                 VkDeviceSize offsets[1] = { 0 };
 
-                vkCmdBindVertexBuffers(cmdBuf, 0, 1, &models.skybox.vertices.buffer, offsets);
-                vkCmdBindIndexBuffer(cmdBuf, models.skybox.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(cmdBuf, models.skybox.indexCount, 1, 0, 0, 0);
+                vkCmdBindVertexBuffers(cmdBuf, 0, 1, &skybox.vertices.buffer, offsets);
+                vkCmdBindIndexBuffer(cmdBuf, skybox.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(cmdBuf, skybox.indexCount, 1, 0, 0, 0);
 
                 vkCmdEndRenderPass(cmdBuf);
 
@@ -1540,7 +1508,7 @@ public:
         VK_CHECK_RESULT(vulkanDevice->createBuffer(
             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            &uniformBuffers.object,
+            &uniformBuffers.matrices,
             sizeof(uboMatrices)));
 
         // Skybox vertex shader uniform buffer
@@ -1558,7 +1526,7 @@ public:
             sizeof(uboParams)));
 
         // Map persistent
-        VK_CHECK_RESULT(uniformBuffers.object.map());
+        VK_CHECK_RESULT(uniformBuffers.matrices.map());
         VK_CHECK_RESULT(uniformBuffers.skybox.map());
         VK_CHECK_RESULT(uniformBuffers.params.map());
 
@@ -1571,9 +1539,9 @@ public:
         // 3D object
         uboMatrices.projection = camera.matrices.perspective;
         uboMatrices.view = camera.matrices.view;
-        uboMatrices.model = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f + (models.objectIndex == 1 ? 45.0f : 0.0f)), glm::vec3(0.0f, 1.0f, 0.0f));
+        uboMatrices.model = glm::mat4();
         uboMatrices.camPos = camera.position * -1.0f;
-        memcpy(uniformBuffers.object.mapped, &uboMatrices, sizeof(uboMatrices));
+        memcpy(uniformBuffers.matrices.mapped, &uboMatrices, sizeof(uboMatrices));
 
         // Skybox
         uboMatrices.model = glm::mat4(glm::mat3(camera.matrices.view));
@@ -1594,8 +1562,8 @@ public:
     void initTableBorderHull (double width, double height, double holeRadius) {
         std::vector<glm::vec2> points;
 
-        double hw = width / 2.0;
-        double hh = height / 2.0;
+        double hw = width ;/// 2.0;
+        double hh = height;/// 2.0;
 
         points.push_back(glm::vec2(-hw,-hh));
         points.push_back(glm::vec2(hw,-hh));
@@ -1623,47 +1591,62 @@ public:
         };
 
         btConvexHullShape* shape = new btConvexHullShape ((btScalar*)pts,4);
+
         //shape->optimizeConvexHull();
 
         plateShape = shape;
+        plateShape->setMargin(0.01);
 
         plateState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), btVector3(0, 0, 0)));
         btRigidBody::btRigidBodyConstructionInfo plateRigidBodyCI(0, plateState, plateShape, btVector3(0, 0, 0));
         plateRigidBodyCI.m_restitution = 0.2;
         plateRigidBodyCI.m_friction = 1.3;
+        plateRigidBodyCI.m_rollingFriction = 0.0006;
 
         plateRB = new btRigidBody(plateRigidBodyCI);
 
         dynamicsWorld->addRigidBody(plateRB);
 
+        //btTransform btt = btTransform::getIdentity();
+        btTransform btt = btTransform(btQuaternion(0,0,0,1),btVector3(0,0,0.5));
+        btTransform rot90 = btTransform(btQuaternion(btVector3(0,1,0),M_PI),btVector3(0,0,0));
+
+        btCompoundShape* cs = new  btCompoundShape();
         btVector3 ptsB[] = {
-            {-hw, 0,-hh},
-            {-hw, 1,-hh},
-            { hw, 0,-hh},
-
-            { hw, 0,-hh},
-            { hw, 1,-hh},
-            { hw, 0, hh},
-            { hw, 0, hh},
-            { hw, 1,-hh},
-            { hw, 0,-hh},
+            {-10, 0, 0},
+            {-10, 1, 0},
+            {10, 1, 0},
+            {10, 0, 0},
         };
+        btConvexHullShape* bs = new btConvexHullShape ((btScalar*)ptsB,4);
+        //btt = btTransform(btQuaternion(0,0,0,1), btVector3(0,-5,-5));
 
+        cs->addChildShape(btt, bs);
+        //btt *= btQuaternion(btVector3(0,1,0), 2.0*M_PI);
+        btt = btTransform(btQuaternion(0,0.7071,0,0.7071),btVector3(0.5,0,0.0));
+        cs->addChildShape(btt, bs);
+        btt = btTransform(btQuaternion(0,1,0,0),btVector3(0,0,-0.5));
+        cs->addChildShape(btt, bs);
+        btt = btTransform(btQuaternion(0,-0.7071,0,0.7071),btVector3(-0.5,0,0));
+        cs->addChildShape(btt, bs);
+
+        //shape = new btConvexHullShape ({-hw, 0,-hh, hw, 0,-hh, hw, 0, hh,-hw, 0, hh},4);
 
 
 
 //        shape->optimizeConvexHull();
 
-//        borderShape = shape;
+        borderShape = cs;
 
-//        borderState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), btVector3(0, 0, 0)));
-//        btRigidBody::btRigidBodyConstructionInfo borderRigidBodyCI(0, borderState, borderShape, btVector3(0, 0, 0));
-//        borderRigidBodyCI.m_restitution = 0.5;
-//        borderRigidBodyCI.m_friction = 1.3;
+        borderState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), btVector3(0, 0, 0)));
+        btRigidBody::btRigidBodyConstructionInfo borderRigidBodyCI(0, borderState, borderShape, btVector3(0, 0, 0));
+        borderRigidBodyCI.m_restitution = 0.99;
+        borderRigidBodyCI.m_friction = 1.3;
+        //borderRigidBodyCI.m_rollingFriction = 1.3;
 
-//        borderRB = new btRigidBody(borderRigidBodyCI);
+        borderRB = new btRigidBody(borderRigidBodyCI);
 
-//        dynamicsWorld->addRigidBody(borderRB);
+        dynamicsWorld->addRigidBody(borderRB);
 
     }
 
@@ -1682,17 +1665,19 @@ public:
         initTableBorderHull(gameTypes[currentGameType].tableWidth, gameTypes[currentGameType].tableLength, 0.05);
 
         ballShape = new btSphereShape(gameTypes[currentGameType].ballSize * 0.5);
-        btScalar mass = 1;
+        ballShape->setMargin(0.01);
+        btScalar mass = 0.1;
         btVector3 fallInertia(0, 0, 0);
         ballShape->calculateLocalInertia(mass, fallInertia);
 
         for (int i=0; i < 15; i++) {
             //balls[i].motionState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), btVector3(i * 0.5, 5 + i *2, i*0.1f)));
-            balls[i].motionState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), btVector3(i * 0.05, 1, i*0.01f)));
+            balls[i].motionState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), btVector3(i * 0.04 - 0.1, 0.1 + i*0.09, i*0.02f)));
 
             btRigidBody::btRigidBodyConstructionInfo ballRigidBodyCI (mass, balls[i].motionState, ballShape, fallInertia);
             ballRigidBodyCI.m_restitution = 0.9f;
             ballRigidBodyCI.m_friction = 1.3;
+            ballRigidBodyCI.m_rollingFriction = 0.00001;
 
             balls[i].body = new btRigidBody(ballRigidBodyCI);
             dynamicsWorld->addRigidBody (balls[i].body);
@@ -1700,7 +1685,6 @@ public:
     }
 
     void update_physics () {
-        InstanceData* data = (InstanceData*)instanceBuffer.mapped;
         for (int i=0; i < 15; i++) {
             btTransform trans;
             balls[i].body->getMotionState()->getWorldTransform(trans);
@@ -1710,12 +1694,13 @@ public:
             btQuaternion btQ = trans.getRotation();
             glm::quat q = glm::quat (btQ.getW(), btQ.getX(), btQ.getY(), btQ.getZ());
 
-            data[i].mat =
+            modGrp->instanceDatas[i].modelMat =
                     glm::translate(glm::mat4(),glm::vec3(-o.getX(), -o.getY(), -o.getZ())) * glm::mat4(q);
         }
+        modGrp->updateInstancesBuffer();
     }
     void step_physics () {
-        dynamicsWorld->stepSimulation(1 / 700.f, 10);
+        dynamicsWorld->stepSimulation(1 / 2000.f, 10);
 
         update_physics();
     }
@@ -1765,10 +1750,10 @@ public:
             if (overlay->comboBox("Material", &materialIndex, materialNames)) {
                 buildCommandBuffers();
             }
-            if (overlay->comboBox("Object type", &models.objectIndex, objectNames)) {
-                updateUniformBuffers();
-                buildCommandBuffers();
-            }
+//            if (overlay->comboBox("Object type", &models.objectIndex, objectNames)) {
+//                updateUniformBuffers();
+//                buildCommandBuffers();
+//            }
             if (overlay->inputFloat("Exposure", &uboParams.exposure, 0.1f, 2)) {
                 updateParams();
             }
