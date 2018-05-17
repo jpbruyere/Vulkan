@@ -48,6 +48,7 @@ layout (binding = 5) uniform sampler2DArray samplerColorMap;
 layout (location = 0) out vec4 outColor;
 
 #define PI 3.1415926535897932384626433832795
+#define FONT_MAT_IDX 5
 
 // From http://filmicgames.com/archives/75
 vec3 Uncharted2Tonemap(vec3 x)
@@ -129,10 +130,30 @@ vec3 specularContribution(vec3 L, vec3 V, vec3 N, vec3 F0, float metallic, float
 	return color;
 }
 
+vec4 distanceFieldFont () {
+	float distance = texture(samplerColorMap, vec3(inUV, uboMat.materials[inMatIdx].texIdx)).a;
+	float smoothWidth = fwidth(distance);
+	float alpha = smoothstep(0.5 - smoothWidth, 0.5 + smoothWidth, distance);
+	vec3 rgb = vec3(alpha) * uboMat.materials[inMatIdx].diffColor.rgb;
+
+	float outline = uboMat.materials[inMatIdx].metalness;
+
+	if (outline > 0.0)
+	{
+		float w = 1.0 - outline;
+		alpha = smoothstep(w - smoothWidth, w + smoothWidth, distance);
+		rgb += mix(vec3(alpha), vec3(0,0,0), alpha);
+	}
+
+	return vec4(rgb, alpha);
+}
 void main()
 {
-	vec4 iDiff;
+	if (inMatIdx==FONT_MAT_IDX) {
+		outColor = distanceFieldFont ();
+	}
 
+	vec4 iDiff;
 	if (uboMat.materials[inMatIdx].diffColor.a > 0.0)
 		iDiff = uboMat.materials[inMatIdx].diffColor;
 	else

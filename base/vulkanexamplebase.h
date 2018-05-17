@@ -135,6 +135,7 @@ public:
     bool prepared = false;
     uint32_t width = 1280;
     uint32_t height = 720;
+    VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT;
 
     /** @brief Last frame time measured using a high performance timer (if available) */
     float frameTimer = 1.0f;

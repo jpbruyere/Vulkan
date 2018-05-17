@@ -46,6 +46,44 @@
 #define DAMP_BDY_ID 3
 #define TARG_BDY_ID 4
 
+// AngelCode .fnt format structs and classes
+struct bmchar {
+    uint32_t x, y;
+    uint32_t width;
+    uint32_t height;
+    int32_t xoffset;
+    int32_t yoffset;
+    int32_t xadvance;
+    uint32_t page;
+};
+
+// Quick and dirty : complete ASCII table
+// Only chars present in the .fnt are filled with data!
+std::array<bmchar, 255> fontChars;
+
+int32_t nextValuePair(std::stringstream *stream)
+{
+    std::string pair;
+    *stream >> pair;
+    uint32_t spos = pair.find("=");
+    std::string value = pair.substr(spos + 1);
+    int32_t val = std::stoi(value);
+    return val;
+}
+
+struct {
+    struct {
+        VkImage image;
+        VkImageView view;
+        VkDeviceMemory memory;
+    } color;
+    struct {
+        VkImage image;
+        VkImageView view;
+        VkDeviceMemory memory;
+    } depth;
+} multisampleTarget;
+
 struct OldMaterial {
     // Parameter block used as push constant block
     struct PushBlock {
@@ -282,8 +320,11 @@ public:
         camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);
         camera.rotationSpeed = 0.05f;
 
-        camera.setRotation({ -35.f, 180.0f, 0.9f });
-        camera.setPosition({ 0.f, 0.3f, 0.64f });
+        //camera.setRotation({ -35.f, 180.0f, 0.9f });
+        camera.setRotation({ -89.f, 180.0f, 0.9f });
+        //camera.setPosition({ 0.f, 0.3f, 0.64f });
+        //camera.setPosition({-0.0920,0.2,0.3980});
+        camera.setPosition({0.0,0.4,0.});
 
         // Setup some default materials (source: https://seblagarde.wordpress.com/2011/08/17/feeding-a-physical-based-lighting-mode/)
         materials.push_back(OldMaterial("Gold", glm::vec3(1.0f, 0.765557f, 0.336057f)));
@@ -370,9 +411,8 @@ public:
     {
         VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
 
-        VkClearValue clearValues[2];
+        VkClearValue clearValues[3];
         clearValues[0].color = { { 0.1f, 0.1f, 0.1f, 1.0f } };
-        clearValues[1].depthStencil = { 1.0f, 0 };
 
         VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
         renderPassBeginInfo.renderPass = renderPass;
@@ -380,7 +420,16 @@ public:
         renderPassBeginInfo.renderArea.offset.y = 0;
         renderPassBeginInfo.renderArea.extent.width = width;
         renderPassBeginInfo.renderArea.extent.height = height;
-        renderPassBeginInfo.clearValueCount = 2;
+
+        if (sampleCount == VK_SAMPLE_COUNT_1_BIT) {
+            clearValues[1].depthStencil = { 1.0f, 0 };
+            renderPassBeginInfo.clearValueCount = 2;
+        }else {
+            clearValues[1].color = { { 0.1f, 0.1f, 0.1f, 1.0f } };
+            clearValues[2].depthStencil = { 1.0f, 0 };
+            renderPassBeginInfo.clearValueCount = 3;
+        }
+
         renderPassBeginInfo.pClearValues = clearValues;
 
         for (size_t i = 0; i < drawCmdBuffers.size(); ++i)
@@ -476,7 +525,120 @@ public:
 
     TargetGroup leftTargetGroup;
 
+    // Basic parser fpr AngelCode bitmap font format files
+    // See http://www.angelcode.com/products/bmfont/doc/file_format.html for details
+    void parsebmFont()
+    {
+        std::string fileName = getAssetPath() + "lcd.fnt";
 
+#if defined(__ANDROID__)
+        // Font description file is stored inside the apk
+        // So we need to load it using the asset manager
+        AAsset* asset = AAssetManager_open(androidApp->activity->assetManager, fileName.c_str(), AASSET_MODE_STREAMING);
+        assert(asset);
+        size_t size = AAsset_getLength(asset);
+
+        assert(size > 0);
+
+        void *fileData = malloc(size);
+        AAsset_read(asset, fileData, size);
+        AAsset_close(asset);
+
+        std::stringbuf sbuf((const char*)fileData);
+        std::istream istream(&sbuf);
+#else
+        std::filebuf fileBuffer;
+        fileBuffer.open(fileName, std::ios::in);
+        std::istream istream(&fileBuffer);
+#endif
+
+        assert(istream.good());
+
+        while (!istream.eof())
+        {
+            std::string line;
+            std::stringstream lineStream;
+            std::getline(istream, line);
+            lineStream << line;
+
+            std::string info;
+            lineStream >> info;
+
+            if (info == "char")
+            {
+                // char id
+                uint32_t charid = nextValuePair(&lineStream);
+                // Char properties
+                fontChars[charid].x = nextValuePair(&lineStream);
+                fontChars[charid].y = nextValuePair(&lineStream);
+                fontChars[charid].width = nextValuePair(&lineStream);
+                fontChars[charid].height = nextValuePair(&lineStream);
+                fontChars[charid].xoffset = nextValuePair(&lineStream);
+                fontChars[charid].yoffset = nextValuePair(&lineStream);
+                fontChars[charid].xadvance = nextValuePair(&lineStream);
+                fontChars[charid].page = nextValuePair(&lineStream);
+            }
+        }
+
+    }
+
+    // Creates a vertex buffer containing quads for the passed text
+    /*void generateText(std:: string text)
+    {
+        std::vector<Vertex> vertices;
+        std::vector<uint32_t> indices;
+        uint32_t indexOffset = 0;
+
+        float w = textures.fontSDF.width;
+
+        float posx = 0.0f;
+        float posy = 0.0f;
+
+        for (uint32_t i = 0; i < text.size(); i++)
+        {
+            bmchar *charInfo = &fontChars[(int)text[i]];
+
+            if (charInfo->width == 0)
+                charInfo->width = 36;
+
+            float charw = ((float)(charInfo->width) / 36.0f);
+            float dimx = 1.0f * charw;
+            float charh = ((float)(charInfo->height) / 36.0f);
+            float dimy = 1.0f * charh;
+            posy = 1.0f - charh;
+
+            float us = charInfo->x / w;
+            float ue = (charInfo->x + charInfo->width) / w;
+            float ts = charInfo->y / w;
+            float te = (charInfo->y + charInfo->height) / w;
+
+            float xo = charInfo->xoffset / 36.0f;
+            float yo = charInfo->yoffset / 36.0f;
+
+            vertices.push_back({ { posx + dimx + xo,  posy + dimy, 0.0f }, { ue, te } });
+            vertices.push_back({ { posx + xo,         posy + dimy, 0.0f }, { us, te } });
+            vertices.push_back({ { posx + xo,         posy,        0.0f }, { us, ts } });
+            vertices.push_back({ { posx + dimx + xo,  posy,        0.0f }, { ue, ts } });
+
+            std::array<uint32_t, 6> letterIndices = { 0,1,2, 2,3,0 };
+            for (auto& index : letterIndices)
+            {
+                indices.push_back(indexOffset + index);
+            }
+            indexOffset += 4;
+
+            float advance = ((float)(charInfo->xadvance) / 36.0f);
+            posx += advance;
+        }
+        indexCount = indices.size();
+
+        // Center
+        for (auto& v : vertices)
+        {
+            v.pos[0] -= posx / 2.0f;
+            v.pos[1] -= 0.5f;
+        }
+    }*/
     void loadAssets()
     {
         modGrp = new vks::ModelGroup(vulkanDevice, queue);
@@ -495,6 +657,7 @@ public:
         std::vector<std::string> mapDic = {
             getAssetPath() + "pinball-back.png",
             getAssetPath() + "flipper.png",
+            getAssetPath() + "lcd.png",
         };
 
         modGrp->addMaterial (0.9f,0.9f,0.9f,1, 0.9f,0.16f,0.f);
@@ -604,7 +767,15 @@ public:
             vks::initializers::pipelineViewportStateCreateInfo(1, 1);
 
         VkPipelineMultisampleStateCreateInfo multisampleState =
-            vks::initializers::pipelineMultisampleStateCreateInfo(VK_SAMPLE_COUNT_1_BIT);
+                vks::initializers::pipelineMultisampleStateCreateInfo(sampleCount,0);
+        // MSAA with sample shading pipeline
+        // Sample shading enables per-sample shading to avoid shader aliasing and smooth out e.g. high frequency texture maps
+        // Note: This will trade performance for are more stable image
+        //multisampleState.rasterizationSamples = sampleCount;
+        if (sampleCount > VK_SAMPLE_COUNT_1_BIT) {
+            multisampleState.sampleShadingEnable = VK_TRUE;				// Enable per-sample shading (instead of per-fragment)
+            multisampleState.minSampleShading = 0.25f;
+        }
 
         std::vector<VkDynamicState> dynamicStateEnables = {
             VK_DYNAMIC_STATE_VIEWPORT,
@@ -1738,7 +1909,8 @@ public:
 
     float sloap = 7.f * M_PI/180.0f;
     btVector3 upVector = btVector3(0, cos(sloap), sin(sloap));
-
+    btHingeConstraint* hingeL;
+    btHingeConstraint* hingeR;
 
     void initTableBorderHull () {
         if (plateShape != nullptr) {
@@ -1842,37 +2014,68 @@ public:
 
         modBodiesIdx = modBodies->addModel(getAssetPath() + "models/pinball-flip.obj");
         //flippers
-        for (int i = 0; i<modBodies->models[modBodiesIdx].parts.size() ; i++) {
+        //right
+        btScalar mass = 0.06;
+        btVector3 fallInertia(0, 0, 0);
+        shape = modBodies->getConvexHullShape(modBodiesIdx, 0);
+        shape->setMargin(0.0034);
+        worldObjs[worldObjFlip].motionState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), upVector*0.005));
+        shape->calculateLocalInertia(mass, fallInertia);
 
-            shape = modBodies->getConvexHullShape(modBodiesIdx, i);
-            shape->setMargin(0.0034);
-            worldObjs[i+worldObjFlip].motionState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), upVector*0.003));
-            btScalar mass = 0.02;
-            btVector3 fallInertia(0, 0, 0);
-            shape->calculateLocalInertia(mass, fallInertia);
+        rbci = btRigidBody::btRigidBodyConstructionInfo (mass, worldObjs[worldObjFlip].motionState, shape, fallInertia);
+        rbci.m_restitution = 0.;
+        rbci.m_friction = 0.2;
 
-            btRigidBody::btRigidBodyConstructionInfo borderRigidBodyCI(mass, worldObjs[i+worldObjFlip].motionState, shape, fallInertia);
-            borderRigidBodyCI.m_restitution = 0.;
-            borderRigidBodyCI.m_friction = 0.2;
+        worldObjs[worldObjFlip].body = new btRigidBody(rbci);
+
+        dynamicsWorld->addRigidBody(worldObjs[worldObjFlip].body,0x02,0x01);
+        //worldObjs[i+worldObjFlip].body->setContactStiffnessAndDamping(300,10);
+        worldObjs[worldObjFlip].body->setAngularFactor(btVector3(.0,1.0,.0));
+        //worldObjs[i+worldObjFlip].body->setGravity(btVector3(0,0,0));
+        worldObjs[worldObjFlip].body->setLinearFactor(btVector3(0,0,0));
+
+        //left
+        shape = modBodies->getConvexHullShape(modBodiesIdx, 1);
+        shape->setMargin(0.0034);
+        worldObjs[worldObjFlip+1].motionState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), upVector*0.005));
+        shape->calculateLocalInertia(mass, fallInertia);
+
+        rbci = btRigidBody::btRigidBodyConstructionInfo (mass, worldObjs[worldObjFlip+1].motionState, shape, fallInertia);
+        rbci.m_restitution = 0.;
+        rbci.m_friction = 0.2;
+
+        worldObjs[worldObjFlip+1].body = new btRigidBody(rbci);
+
+        dynamicsWorld->addRigidBody(worldObjs[worldObjFlip+1].body,0x02,0x01);
+        worldObjs[worldObjFlip+1].body->setAngularFactor(btVector3(.0,1.0,.0));
+        worldObjs[worldObjFlip+1].body->setLinearFactor(btVector3(0,0,0));
+
+        //btHingeConstraint* hinge = new btHingeConstraint(*worldObjs[worldObjFlip+1].body, btVector3(-0.09220,-0.01478,0.39887),upVector,true);
+        btVector3 vUp = btVector3(0,1,0);
+        //btVector3 vDisp = btVector3(-0.09220,-0.01478,0.39887);//btVector3(0,0,0);
+        //btVector3 vDisp = btVector3(-0.0920,0,0.39799);//btVector3(0,0,0);
+        btVector3 vDisp = worldObjs[worldObjFlip+1].body->getCenterOfMassPosition();
+
+        //hingeL = new btHingeConstraint(*worldObjs[worldObjFlip+1].body, vDisp,vUp,false);
+        //const btTransform trA = btTransform(btQuaternion(vUp, -0.1), vDisp);
+        //const btTransform trB = btTransform(btQuaternion(vUp, 0.1), vDisp);
+        //hinge->setFrames(trA, trB);
+        hingeL = new btHingeConstraint(*worldObjs[worldObjFlip+1].body, btVector3(0,0,0),btVector3(0,1,0),true);
+        hingeL->setLimit(-0.3, 0.5, 1.f,0.6f,1.0f);
+        //hingeL->setOverrideNumSolverIterations(1);
+        //hinge->setBreakingImpulseThreshold(100000.0);
+        //hinge->buildJacobian();
+        //hingeL->setAngularOnly(true);
+        //hingeL->set
+        dynamicsWorld->addConstraint(hingeL);
 
 
-            worldObjs[i+worldObjFlip].body = new btRigidBody(borderRigidBodyCI);
+        hingeR = new btHingeConstraint(*worldObjs[worldObjFlip].body, btVector3(0.09220,-0.01478,0.39887),upVector,true);
+        hingeR->setLimit(-0.5, 0.3, 9999.f, 0.1f, 1.0f);
+        dynamicsWorld->addConstraint(hingeR);
 
-            dynamicsWorld->addRigidBody(worldObjs[i+worldObjFlip].body,0x02,0x01);
-
-            //worldObjs[i+worldObjFlip].body->setContactStiffnessAndDamping(300,10);
-            //worldObjs[i+worldObjFlip].body->setAngularFactor(btVector3(0,0.2,0));
-            //worldObjs[i+worldObjFlip].body->setLinearFactor(btVector3(1,0,1));
-        }
-        btHingeConstraint* hinge = new btHingeConstraint(*worldObjs[worldObjFlip+1].body, btVector3(-0.09220,-0.01478,0.39887),upVector,true);
-        hinge->setLimit(-0.3, 0.5, 1000.f,0.9f,1);
-        //hinge->setBreakingImpulseThreshold(200000000);
-        dynamicsWorld->addConstraint(hinge);
-
-
-        hinge = new btHingeConstraint(*worldObjs[worldObjFlip].body, btVector3(0.09220,-0.01478,0.39887),upVector,true);
-        hinge->setLimit(-0.5, 0.3, 1000.f, 0.9f, 1);
-        dynamicsWorld->addConstraint(hinge);
+        //worldObjs[worldObjFlip+1].body->setCenterOfMassTransform(btTransform(btQuaternion(0, 0, 0, 1),
+        //                                             btVector3(-0.032,0,0.0064)));
 
         modBodies->destroy();
     }
@@ -1958,15 +2161,25 @@ public:
     clock_t lastTime;
 
     float maxSubsteps = 10.f;
-    float fixedTimeStepDiv = 1000.0;
+    float fixedTimeStepDiv = 200.0;
     int subSteps = 0;
+    float flipperStrength = 0.4f;
 
     void step_physics () {
         float multi = 3.;
+
         if (leftFlip) {
-            worldObjs[2].body->applyTorque(upVector*multi);
+            /*btTransform trA = worldObjs[2].body.getWorldTransform();
+            btVector3 hingeAxisInWorld = trA.getBasis()*hinge->getFrameOffsetA().getBasis().getColumn(2);
+            hinge->getRigidBodyA().applyTorque(-hingeAxisInWorld*10);
+            hinge->getRigidBodyB().applyTorque(hingeAxisInWorld*10);*/
+
+            //worldObjs[2].body->applyTorque(upVector*multi);
+            worldObjs[2].body->applyTorque(btVector3(0,1,0)* flipperStrength);
         }else {
-            worldObjs[2].body->applyTorque(-upVector*multi);
+            //worldObjs[2].body->applyTorque(btVector3(0,-1,0)*multi);
+            worldObjs[2].body->applyTorque(btVector3(0,-1,0)* flipperStrength);
+//            worldObjs[2].body->applyTorque(-upVector*multi);
         }
 
         if (rightFlip) {
@@ -1980,7 +2193,7 @@ public:
 
         if (diff > 1.0/1000.0) {
             lastTime = time;
-            subSteps = dynamicsWorld->stepSimulation(diff,int(maxSubsteps),1.0/fixedTimeStepDiv);
+            subSteps = dynamicsWorld->stepSimulation(diff*0.8f,int(maxSubsteps),1.0/fixedTimeStepDiv);
             update_physics();
             check_collisions(dynamicsWorld, this);
 
@@ -2003,9 +2216,255 @@ public:
 
         VulkanExampleBase::submitFrame();
     }
+    // Creates a multi sample render target (image and view) that is used to resolve
+    // into the visible frame buffer target in the render pass
+    void setupMultisampleTarget()
+    {
+        // Check if device supports requested sample count for color and depth frame buffer
+        assert((deviceProperties.limits.framebufferColorSampleCounts >= sampleCount) && (deviceProperties.limits.framebufferDepthSampleCounts >= sampleCount));
+
+        // Color target
+        VkImageCreateInfo info = vks::initializers::imageCreateInfo();
+        info.imageType = VK_IMAGE_TYPE_2D;
+        info.format = swapChain.colorFormat;
+        info.extent.width = width;
+        info.extent.height = height;
+        info.extent.depth = 1;
+        info.mipLevels = 1;
+        info.arrayLayers = 1;
+        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        info.samples = sampleCount;
+        // Image will only be used as a transient target
+        info.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        VK_CHECK_RESULT(vkCreateImage(device, &info, nullptr, &multisampleTarget.color.image));
+
+        VkMemoryRequirements memReqs;
+        vkGetImageMemoryRequirements(device, multisampleTarget.color.image, &memReqs);
+        VkMemoryAllocateInfo memAlloc = vks::initializers::memoryAllocateInfo();
+        memAlloc.allocationSize = memReqs.size;
+        // We prefer a lazily allocated memory type
+        // This means that the memory gets allocated when the implementation sees fit, e.g. when first using the images
+        VkBool32 lazyMemTypePresent;
+        memAlloc.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT, &lazyMemTypePresent);
+        if (!lazyMemTypePresent)
+        {
+            // If this is not available, fall back to device local memory
+            memAlloc.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        }
+        VK_CHECK_RESULT(vkAllocateMemory(device, &memAlloc, nullptr, &multisampleTarget.color.memory));
+        vkBindImageMemory(device, multisampleTarget.color.image, multisampleTarget.color.memory, 0);
+
+        // Create image view for the MSAA target
+        VkImageViewCreateInfo viewInfo = vks::initializers::imageViewCreateInfo();
+        viewInfo.image = multisampleTarget.color.image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = swapChain.colorFormat;
+        viewInfo.components.r = VK_COMPONENT_SWIZZLE_R;
+        viewInfo.components.g = VK_COMPONENT_SWIZZLE_G;
+        viewInfo.components.b = VK_COMPONENT_SWIZZLE_B;
+        viewInfo.components.a = VK_COMPONENT_SWIZZLE_A;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        VK_CHECK_RESULT(vkCreateImageView(device, &viewInfo, nullptr, &multisampleTarget.color.view));
+
+        // Depth target
+        info.imageType = VK_IMAGE_TYPE_2D;
+        info.format = depthFormat;
+        info.extent.width = width;
+        info.extent.height = height;
+        info.extent.depth = 1;
+        info.mipLevels = 1;
+        info.arrayLayers = 1;
+        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        info.samples = sampleCount;
+        // Image will only be used as a transient target
+        info.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        VK_CHECK_RESULT(vkCreateImage(device, &info, nullptr, &multisampleTarget.depth.image));
+
+        vkGetImageMemoryRequirements(device, multisampleTarget.depth.image, &memReqs);
+        memAlloc = vks::initializers::memoryAllocateInfo();
+        memAlloc.allocationSize = memReqs.size;
+
+        memAlloc.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT, &lazyMemTypePresent);
+        if (!lazyMemTypePresent)
+        {
+            memAlloc.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        }
+
+        VK_CHECK_RESULT(vkAllocateMemory(device, &memAlloc, nullptr, &multisampleTarget.depth.memory));
+        vkBindImageMemory(device, multisampleTarget.depth.image, multisampleTarget.depth.memory, 0);
+
+        // Create image view for the MSAA target
+        viewInfo.image = multisampleTarget.depth.image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = depthFormat;
+        viewInfo.components.r = VK_COMPONENT_SWIZZLE_R;
+        viewInfo.components.g = VK_COMPONENT_SWIZZLE_G;
+        viewInfo.components.b = VK_COMPONENT_SWIZZLE_B;
+        viewInfo.components.a = VK_COMPONENT_SWIZZLE_A;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        VK_CHECK_RESULT(vkCreateImageView(device, &viewInfo, nullptr, &multisampleTarget.depth.view));
+    }
+    // Setup a render pass for using a multi sampled attachment
+    // and a resolve attachment that the msaa image is resolved
+    // to at the end of the render pass
+    void setupRenderPass()
+    {
+        if (sampleCount == VK_SAMPLE_COUNT_1_BIT) {
+            VulkanExampleBase::setupRenderPass();
+            return;
+        }
+
+        // Overrides the virtual function of the base class
+
+        std::array<VkAttachmentDescription, 4> attachments = {};
+
+        // Multisampled attachment that we render to
+        attachments[0].format = swapChain.colorFormat;
+        attachments[0].samples = sampleCount;
+        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        // No longer required after resolve, this may save some bandwidth on certain GPUs
+        attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        // This is the frame buffer attachment to where the multisampled image
+        // will be resolved to and which will be presented to the swapchain
+        attachments[1].format = swapChain.colorFormat;
+        attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[1].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        // Multisampled depth attachment we render to
+        attachments[2].format = depthFormat;
+        attachments[2].samples = sampleCount;
+        attachments[2].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[2].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[2].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        // Depth resolve attachment
+        attachments[3].format = depthFormat;
+        attachments[3].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[3].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[3].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[3].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[3].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[3].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[3].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        VkAttachmentReference colorReference = {};
+        colorReference.attachment = 0;
+        colorReference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkAttachmentReference depthReference = {};
+        depthReference.attachment = 2;
+        depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        // Resolve attachment reference for the color attachment
+        VkAttachmentReference resolveReference = {};
+        resolveReference.attachment = 1;
+        resolveReference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass = {};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &colorReference;
+        // Pass our resolve attachments to the sub pass
+        subpass.pResolveAttachments = &resolveReference;
+        subpass.pDepthStencilAttachment = &depthReference;
+
+        std::array<VkSubpassDependency, 2> dependencies;
+
+        dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[0].dstSubpass = 0;
+        dependencies[0].srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+        dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependencies[0].srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+        dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+        dependencies[1].srcSubpass = 0;
+        dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependencies[1].dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+        dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dependencies[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+        dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+        VkRenderPassCreateInfo renderPassInfo = vks::initializers::renderPassCreateInfo();
+        renderPassInfo.attachmentCount = attachments.size();
+        renderPassInfo.pAttachments = attachments.data();
+        renderPassInfo.subpassCount = 1;
+        renderPassInfo.pSubpasses = &subpass;
+        renderPassInfo.dependencyCount = 2;
+        renderPassInfo.pDependencies = dependencies.data();
+
+        VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass));
+    }
+
+    // Frame buffer attachments must match with render pass setup,
+    // so we need to adjust frame buffer creation to cover our
+    // multisample target
+    void setupFrameBuffer()
+    {
+        if (sampleCount == VK_SAMPLE_COUNT_1_BIT) {
+            VulkanExampleBase::setupFrameBuffer();
+            return;
+        }
+
+        // Overrides the virtual function of the base class
+
+        std::array<VkImageView, 4> attachments;
+
+        setupMultisampleTarget();
+
+        attachments[0] = multisampleTarget.color.view;
+        attachments[2] = multisampleTarget.depth.view;
+        attachments[3] = depthStencil.view;
+
+        VkFramebufferCreateInfo frameBufferCreateInfo = {};
+        frameBufferCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        frameBufferCreateInfo.pNext = NULL;
+        frameBufferCreateInfo.renderPass = renderPass;
+        frameBufferCreateInfo.attachmentCount = attachments.size();
+        frameBufferCreateInfo.pAttachments = attachments.data();
+        frameBufferCreateInfo.width = width;
+        frameBufferCreateInfo.height = height;
+        frameBufferCreateInfo.layers = 1;
+
+        // Create frame buffers for every swap chain image
+        frameBuffers.resize(swapChain.imageCount);
+        for (uint32_t i = 0; i < frameBuffers.size(); i++)
+        {
+            attachments[1] = swapChain.buffers[i].view;
+            VK_CHECK_RESULT(vkCreateFramebuffer(device, &frameBufferCreateInfo, nullptr, &frameBuffers[i]));
+        }
+    }
 
     void prepare()
     {
+        sampleCount = VK_SAMPLE_COUNT_1_BIT;
+
         VulkanExampleBase::prepare();
         loadAssets();
 
@@ -2030,7 +2489,7 @@ public:
         switch (key) {
         case 37://left ctrl
             leftFlip = true;
-            //worldObjs[2].body->activate();
+            worldObjs[2].body->activate();
             break;
         case 105://right ctrl
             rightFlip = true;
@@ -2042,7 +2501,7 @@ public:
         switch (key) {
         case 37://left ctrl
             leftFlip = false;
-            //worldObjs[2].body->activate();
+            worldObjs[2].body->activate();
             break;
         case 105://right ctrl
             rightFlip = false;
@@ -2052,6 +2511,12 @@ public:
     }
     virtual void keyPressed(uint32_t key) {
         switch (key) {
+//        case 37://left ctrl
+//            worldObjs[2].body->clearForces();
+//            break;
+//        case 105://right ctrl
+//            worldObjs[1].body->clearForces();
+//            break;
         case 65:
             worldObjs[0].body->setLinearVelocity(worldObjs[0].body->getLinearVelocity() + pushDir);
             worldObjs[0].body->activate();
@@ -2121,6 +2586,10 @@ public:
                 if (overlay->checkBox("Split impulse", &splitImpulse)) {
                     info.m_splitImpulse = int(splitImpulse);
                 }
+                /*btVector3 orig = hingeL->getAFrame().getOrigin().getX();
+                float f = orig.getX();
+                if (overlay->inputFloat ("HingeX", &f, 0.001, 4)) {
+                    hingeL->setFrames();*/
             }
 
             if (overlay->comboBox("Material", &materialIndex, materialNames)) {
