@@ -22,8 +22,8 @@ function(buildExample EXAMPLE_NAME)
 		target_link_libraries(${EXAMPLE_NAME} base ${Vulkan_LIBRARY} ${ASSIMP_LIBRARIES} ${WINLIBS})
 	else(WIN32)
 		add_executable(${EXAMPLE_NAME} ${MAIN_CPP} ${SOURCE} ${SHADERS})
-		target_include_directories(${EXAMPLE_NAME} PRIVATE ${BULLET_INCLUDE_DIRS})
-		target_link_libraries(${EXAMPLE_NAME} base ${BULLET_LIBRARIES})
+		target_include_directories(${EXAMPLE_NAME} PRIVATE "../external/bullet3/src")
+		target_link_libraries(${EXAMPLE_NAME} base BulletSoftBody BulletDynamics BulletCollision LinearMath)
 	endif(WIN32)
 
 	if(RESOURCE_INSTALL_DIR)
@@ -102,6 +102,9 @@ set(EXAMPLES
 	viewportarray
 	vulkanscene
 )
-buildExample(pbribl)
-buildExample(instancing)
+#buildExample(pbribl)
+#buildExample(instancing)
+#buildExample(shadowmappingcascade)
+buildExample(pinball)
+buildExample(distancefieldfonts)
 #buildExamples()

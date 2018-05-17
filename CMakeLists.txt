@@ -6,6 +6,11 @@ set(NAME vulkanExamples)
 
 project(${NAME})
 
+#set (BULLET_LIBS "BulletSoftBody BulletDynamics BulletCollision LinearMath")
+set (BULLET_LIBS "LinearMath Bullet3Common Bullet3Dynamics Bullet3Collision")
+
+add_subdirectory(external/bullet3)
+#include_directories(external/bullet3)
 include_directories(external)
 include_directories(external/glm)
 include_directories(external/gli)
@@ -84,7 +89,7 @@ endif(CMAKE_COMPILER_IS_GNUCXX)
 add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 add_definitions(-std=c++11)
 
-find_package (Bullet REQUIRED)
+#find_package (Bullet REQUIRED)
 
 file(GLOB SOURCE *.cpp )
 
@@ -103,7 +108,7 @@ ENDIF(MSVC)
 IF(WIN32)
 	# Nothing here (yet)
 ELSE(WIN32)
-	link_libraries(${XCB_LIBRARIES} ${Vulkan_LIBRARY} ${Vulkan_LIBRARY} ${ASSIMP_LIBRARIES} ${WAYLAND_CLIENT_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+	link_libraries(${XCB_LIBRARIES} ${Vulkan_LIBRARY} ${Vulkan_LIBRARY} ${ASSIMP_LIBRARIES} ${WAYLAND_CLIENT_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} BulletSoftBody BulletDynamics BulletCollision LinearMath)
 ENDIF(WIN32)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/")

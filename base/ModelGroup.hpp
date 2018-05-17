@@ -29,6 +29,8 @@
 #include "VulkanBuffer.hpp"
 #include "VulkanTexture.hpp"
 
+#include <btBulletDynamicsCommon.h>
+
 #if defined(__ANDROID__)
 #include <android/asset_manager.h>
 #endif
@@ -36,10 +38,11 @@
 namespace vks
 {
     struct Material {
-        uint32_t texIdx;
+        float color[4];         //if alpha > 0=> use color
         float metalness;
         float roughness;
         float specular;
+        uint32_t texIdx;    //0 => no textue
     };
 
     class ModelGroup {
@@ -96,17 +99,43 @@ namespace vks
             return idx;
         }
         uint32_t addInstance(uint32_t modelIdx, uint32_t matIndex = 0){
-            return addInstance(modelIdx, 0, glm::mat4(), matIndex);
+            uint32_t idx = instances.size();
+            for (int i = 0; i < models[modelIdx].parts.size(); i++)
+                addInstance(modelIdx, i, glm::mat4(), matIndex);
+            return idx;
+
         }
         uint32_t addMaterial (uint32_t mapIndex, float metalness, float roughness, float specular) {
-            Material mat = {mapIndex, metalness, roughness, specular};
+
+            Material mat = {{0.f,0.f,0.f,0.f}, metalness, roughness, specular, mapIndex};
             materials.push_back(mat);
             return materials.size()-1;
         }
+        uint32_t addMaterial (float r, float g, float b, float a, float metalness, float roughness, float specular) {
+            Material mat = {{r,g,b,a}, metalness, roughness, specular, 0};
+            materials.push_back(mat);
+            return materials.size()-1;
+        }
+        btConvexHullShape* getConvexHullShape (uint32_t modelIdx, uint32_t partIdx) {
+            ModelPart* mod = &models[modelIdx].parts[partIdx];
+            btConvexHullShape* shape  = new btConvexHullShape();
 
-        static const int defaultFlags = aiProcess_FlipWindingOrder | aiProcess_PreTransformVertices |
-                aiProcess_Triangulate | aiProcess_CalcTangentSpace | aiProcess_GenSmoothNormals;
-        /*static const int defaultFlags =
+            for (int i = 0 ; i < mod->indexCount ; i++) {
+                float* pV = &vertexBuffer [(mod->vertexBase + indexBuffer[mod->indexBase + i])*8];
+                btVector3 v = btVector3(-pV[0], -pV[1], -pV[2]);
+                shape->addPoint(v);
+            }
+            shape->optimizeConvexHull();
+            shape->setMargin(0.001);
+            return shape;
+        }
+
+        static const int defaultFlags = aiProcess_FlipWindingOrder |
+                aiProcess_Triangulate | aiProcess_CalcTangentSpace | aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices;
+
+        /*orig : static const int defaultFlags = aiProcess_FlipWindingOrder | aiProcess_PreTransformVertices |
+                aiProcess_Triangulate | aiProcess_CalcTangentSpace | aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices;*/
+        /*model2 : static const int defaultFlags =
                 aiProcess_MakeLeftHanded | aiProcess_OptimizeMeshes | aiProcess_Triangulate |
                 aiProcess_JoinIdenticalVertices| aiProcess_CalcTangentSpace | aiProcess_GenSmoothNormals;*/
 
@@ -150,14 +179,9 @@ namespace vks
                 materialsBuff.destroy();
             if (instanceBuff.size > 0)
                 instanceBuff.destroy();
-            texArray.destroy();
-            vkDestroyBuffer(device->logicalDevice, vertices.buffer, nullptr);
-            vkFreeMemory(device->logicalDevice, vertices.memory, nullptr);
-            if (indices.buffer != VK_NULL_HANDLE)
-            {
-                vkDestroyBuffer(device->logicalDevice, indices.buffer, nullptr);
-                vkFreeMemory(device->logicalDevice, indices.memory, nullptr);
-            }
+            //texArray.destroy();
+            vertices.destroy();
+            indices.destroy();
         }
 
         void prepare(std::vector<std::string> mapDic, uint32_t texSize = 1024)
@@ -227,7 +251,7 @@ namespace vks
             texArray.buildFromImages(mapDic, texSize, VK_FORMAT_R8G8B8A8_UNORM, device, copyQueue);
 
             buildInstanceBuffer();
-            //buildMaterialBuffer();
+            buildMaterialBuffer();
         }
 
         void buildCommandBuffer(VkCommandBuffer cmdBuff){

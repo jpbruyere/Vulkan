@@ -57,8 +57,10 @@ namespace vks
         /** @brief Release all Vulkan resources held by this texture */
         void destroy()
         {
-            vkDestroyImageView(device->logicalDevice, view, nullptr);
-            vkDestroyImage(device->logicalDevice, image, nullptr);
+            if (view)
+                vkDestroyImageView(device->logicalDevice, view, nullptr);
+            if (image)
+                vkDestroyImage(device->logicalDevice, image, nullptr);
             if (sampler)
             {
                 vkDestroySampler(device->logicalDevice, sampler, nullptr);

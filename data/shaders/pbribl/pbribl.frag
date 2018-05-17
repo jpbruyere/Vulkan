@@ -1,9 +1,21 @@
 #version 450
 
+struct Material {
+	int texIdx;
+	float metalness;
+	float roughness;
+	float specular;
+};
+
+layout (binding = 6) uniform UboMaterial
+{
+	Material materials[256];
+} uboMat;
+
 layout (location = 0) in vec3 inWorldPos;
 layout (location = 1) in vec3 inNormal;
 layout (location = 2) in vec2 inUV;
-layout (location = 3) flat in int inTexId;
+layout (location = 3) flat in int inMatIdx;
 
 layout (binding = 0) uniform UBO {
 	mat4 projection;
@@ -118,14 +130,14 @@ vec3 specularContribution(vec3 L, vec3 V, vec3 N, vec3 F0, float metallic, float
 
 void main()
 {
-	vec4 iDiff = texture(samplerColorMap, vec3(inUV, inTexId));
+	vec4 iDiff = texture(samplerColorMap, vec3(inUV, uboMat.materials[inMatIdx].texIdx));
 
 	vec3 N = normalize(inNormal);
 	vec3 V = normalize(ubo.camPos - inWorldPos);
 	vec3 R = reflect(-V, N);
 
-	float metallic = material.metallic;
-	float roughness = material.roughness;
+	float metallic = uboMat.materials[inMatIdx].metalness;
+	float roughness = uboMat.materials[inMatIdx].roughness;
 
 	vec3 F0 = vec3(0.04);
 	F0 = mix(F0, pow(iDiff.rgb, vec3(2.2)), metallic);

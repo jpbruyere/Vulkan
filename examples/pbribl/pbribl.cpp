@@ -84,7 +84,7 @@ public:
         double ballSize;
     }gameTypes [2];
 
-    struct Ball {
+    struct MovingObject {
 
         btDefaultMotionState* motionState = nullptr;
         btRigidBody* body = nullptr;
@@ -325,16 +325,13 @@ public:
 
         textures.environmentCube.loadFromFile(getAssetPath() + "textures/hdr/pisa_cube.ktx", VK_FORMAT_R16G16B16A16_SFLOAT, vulkanDevice, queue);
 
-
-
         for (int i = 0; i < 15; i++){
             modGrp->addInstance(modBall, i);
             modGrp->addMaterial(i,0.1f,0.001f,0);
         }
 
-        modGrp->addMaterial(15,0.001f,0.8f,0);
+        modGrp->addMaterial(15, 0.001f, 0.9f,0);
         modGrp->addInstance(modPlate, 15);
-
 
         std::vector<std::string> mapDic = {
             getAssetPath() + "1.png",
@@ -363,7 +360,7 @@ public:
     {
         // Descriptor Pool
         std::vector<VkDescriptorPoolSize> poolSizes = {
-            vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4),
+            vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 6),
             vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8)
         };
         VkDescriptorPoolCreateInfo descriptorPoolInfo =	vks::initializers::descriptorPoolCreateInfo(poolSizes, 2);
@@ -377,6 +374,7 @@ public:
             vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 3),
             vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 4),
             vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 5),
+            vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 6),
         };
         VkDescriptorSetLayoutCreateInfo descriptorLayout = 	vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
         VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayout));
@@ -393,6 +391,7 @@ public:
             vks::initializers::writeDescriptorSet(descriptorSets.matrices, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &textures.lutBrdf.descriptor),
             vks::initializers::writeDescriptorSet(descriptorSets.matrices, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4, &textures.prefilteredCube.descriptor),
             vks::initializers::writeDescriptorSet(descriptorSets.matrices, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5, &modGrp->texArray.descriptor),
+            vks::initializers::writeDescriptorSet(descriptorSets.matrices, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 6, &modGrp->materialsBuff.descriptor),
         };
         vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, NULL);
 
@@ -1560,17 +1559,6 @@ public:
     }
 
     void initTableBorderHull (double width, double height, double holeRadius) {
-        std::vector<glm::vec2> points;
-
-        double hw = width ;/// 2.0;
-        double hh = height;/// 2.0;
-
-        points.push_back(glm::vec2(-hw,-hh));
-        points.push_back(glm::vec2(hw,-hh));
-        points.push_back(glm::vec2(hw,hh));
-        points.push_back(glm::vec2(-hw,hh));
-        //points.push_back(glm::vec2(-hw,-hh));
-
         if (plateShape != nullptr) {
             dynamicsWorld->removeRigidBody(plateRB);
             dynamicsWorld->removeRigidBody(borderRB);
@@ -1583,75 +1571,29 @@ public:
             delete borderRB;
         }
 
-        btVector3 pts[] = {
-            {-hw, 0,-hh},
-            { hw, 0,-hh},
-            { hw, 0, hh},
-            {-hw, 0, hh}
-        };
-
-        btConvexHullShape* shape = new btConvexHullShape ((btScalar*)pts,4);
-
-        //shape->optimizeConvexHull();
-
-        plateShape = shape;
-        plateShape->setMargin(0.01);
-
-        plateState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), btVector3(0, 0, 0)));
-        btRigidBody::btRigidBodyConstructionInfo plateRigidBodyCI(0, plateState, plateShape, btVector3(0, 0, 0));
+        btRigidBody::btRigidBodyConstructionInfo plateRigidBodyCI(0, nullptr, modGrp->getConvexHullShape(1, 4), btVector3(0, 0, 0));
         plateRigidBodyCI.m_restitution = 0.2;
         plateRigidBodyCI.m_friction = 1.3;
-        plateRigidBodyCI.m_rollingFriction = 0.0006;
+        //plateRigidBodyCI.m_rollingFriction = 0.0006;
 
         plateRB = new btRigidBody(plateRigidBodyCI);
 
         dynamicsWorld->addRigidBody(plateRB);
 
-        //btTransform btt = btTransform::getIdentity();
-        btTransform btt = btTransform(btQuaternion(0,0,0,1),btVector3(0,0,0.5));
-        btTransform rot90 = btTransform(btQuaternion(btVector3(0,1,0),M_PI),btVector3(0,0,0));
+        for (int i = 0; i<4 ; i++) {
+            btRigidBody::btRigidBodyConstructionInfo borderRigidBodyCI(0, nullptr, modGrp->getConvexHullShape(1, i), btVector3(0, 0, 0));
+            borderRigidBodyCI.m_restitution = 0.6;
+            borderRigidBodyCI.m_friction = 1.3;
 
-        btCompoundShape* cs = new  btCompoundShape();
-        btVector3 ptsB[] = {
-            {-10, 0, 0},
-            {-10, 1, 0},
-            {10, 1, 0},
-            {10, 0, 0},
-        };
-        btConvexHullShape* bs = new btConvexHullShape ((btScalar*)ptsB,4);
-        //btt = btTransform(btQuaternion(0,0,0,1), btVector3(0,-5,-5));
+            btRigidBody* brdRB = new btRigidBody(borderRigidBodyCI);
 
-        cs->addChildShape(btt, bs);
-        //btt *= btQuaternion(btVector3(0,1,0), 2.0*M_PI);
-        btt = btTransform(btQuaternion(0,0.7071,0,0.7071),btVector3(0.5,0,0.0));
-        cs->addChildShape(btt, bs);
-        btt = btTransform(btQuaternion(0,1,0,0),btVector3(0,0,-0.5));
-        cs->addChildShape(btt, bs);
-        btt = btTransform(btQuaternion(0,-0.7071,0,0.7071),btVector3(-0.5,0,0));
-        cs->addChildShape(btt, bs);
-
-        //shape = new btConvexHullShape ({-hw, 0,-hh, hw, 0,-hh, hw, 0, hh,-hw, 0, hh},4);
-
-
-
-//        shape->optimizeConvexHull();
-
-        borderShape = cs;
-
-        borderState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), btVector3(0, 0, 0)));
-        btRigidBody::btRigidBodyConstructionInfo borderRigidBodyCI(0, borderState, borderShape, btVector3(0, 0, 0));
-        borderRigidBodyCI.m_restitution = 0.99;
-        borderRigidBodyCI.m_friction = 1.3;
-        //borderRigidBodyCI.m_rollingFriction = 1.3;
-
-        borderRB = new btRigidBody(borderRigidBodyCI);
-
-        dynamicsWorld->addRigidBody(borderRB);
-
+            dynamicsWorld->addRigidBody(brdRB);
+        }
     }
 
     void init_physics() {
         broadphase = new btDbvtBroadphase();
+
         collisionConfiguration = new btDefaultCollisionConfiguration();
         dispatcher = new btCollisionDispatcher(collisionConfiguration);
         btGImpactCollisionAlgorithm::registerAlgorithm(dispatcher);
@@ -1660,29 +1602,29 @@ public:
         dynamicsWorld = new btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfiguration);
         dynamicsWorld->setGravity(btVector3(0, -10, 0));
 
-        //plateShape = new btStaticPlaneShape(btVector3(0, 1, 0), 1);
-
         initTableBorderHull(gameTypes[currentGameType].tableWidth, gameTypes[currentGameType].tableLength, 0.05);
 
         ballShape = new btSphereShape(gameTypes[currentGameType].ballSize * 0.5);
-        ballShape->setMargin(0.01);
+        ballShape->setMargin(0.001);
         btScalar mass = 0.1;
         btVector3 fallInertia(0, 0, 0);
         ballShape->calculateLocalInertia(mass, fallInertia);
 
         for (int i=0; i < 15; i++) {
             //balls[i].motionState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), btVector3(i * 0.5, 5 + i *2, i*0.1f)));
-            balls[i].motionState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), btVector3(i * 0.04 - 0.1, 0.1 + i*0.09, i*0.02f)));
+            balls[i].motionState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), btVector3(i * 0.02 - 0.5, 0.1 + i*0.05, i*0.01f - 0.2)));
 
             btRigidBody::btRigidBodyConstructionInfo ballRigidBodyCI (mass, balls[i].motionState, ballShape, fallInertia);
-            ballRigidBodyCI.m_restitution = 0.9f;
+            ballRigidBodyCI.m_restitution = 0.99f;
             ballRigidBodyCI.m_friction = 1.3;
-            ballRigidBodyCI.m_rollingFriction = 0.00001;
+            //ballRigidBodyCI.m_rollingFriction = 0.000001;
 
             balls[i].body = new btRigidBody(ballRigidBodyCI);
             dynamicsWorld->addRigidBody (balls[i].body);
         }
     }
+
+    btVector3 pushDir = btVector3(0,1,0);
 
     void update_physics () {
         for (int i=0; i < 15; i++) {
@@ -1700,7 +1642,7 @@ public:
         modGrp->updateInstancesBuffer();
     }
     void step_physics () {
-        dynamicsWorld->stepSimulation(1 / 2000.f, 10);
+        dynamicsWorld->stepSimulation(1 / 2000.f, 0.1);
 
         update_physics();
     }
@@ -1718,9 +1660,11 @@ public:
 
     void prepare()
     {
-        init_physics();
         VulkanExampleBase::prepare();
         loadAssets();
+
+        init_physics();
+
         generateBRDFLUT();
         generateIrradianceCube();
         generatePrefilteredCube();
@@ -1731,6 +1675,43 @@ public:
         prepared = true;
     }
 
+    virtual void keyPressed(uint32_t key) {
+        switch (key) {
+        case 65:
+            balls[0].body->setLinearVelocity(balls[0].body->getLinearVelocity() + pushDir);
+            balls[0].body->activate();
+            break;
+        case 79:
+            pushDir = btVector3(-1,0,-1);
+            break;
+        case 80:
+            pushDir = btVector3(0,0,-1);
+            break;
+        case 81:
+            pushDir = btVector3(1,0,-1);
+            break;
+        case 83:
+            pushDir = btVector3(-1,0,0);
+            break;
+        case 84:
+            //pushDir = btVector3(1,0,0);
+            balls[0].body->setWorldTransform(btTransform(btQuaternion(0, 0, 0, 1), btVector3(0,0.1,0)));
+            balls[0].body->setLinearVelocity(btVector3(0,0,0));
+            break;
+        case 85:
+            pushDir = btVector3(1,0,0);
+            break;
+        case 87:
+            pushDir = btVector3(-1,0,1);
+            break;
+        case 88:
+            pushDir = btVector3(0,0,1);
+            break;
+        case 89:
+            pushDir = btVector3(1,0,1);
+            break;
+        }
+    }
     virtual void render()
     {
         if (!prepared)
@@ -1756,6 +1737,11 @@ public:
 //            }
             if (overlay->inputFloat("Exposure", &uboParams.exposure, 0.1f, 2)) {
                 updateParams();
+            }
+            if (modGrp != nullptr){
+                if (overlay->inputFloat("plate roughness", &modGrp->materials[15].roughness, 0.01f, 3)) {
+                    modGrp->updateMaterialBuffer();
+                }
             }
             if (overlay->inputFloat("Gamma", &uboParams.gamma, 0.1f, 2)) {
                 updateParams();
