@@ -6,6 +6,9 @@
 * This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
 */
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #include "vulkanexamplebase.h"
 
 std::vector<const char*> VulkanExampleBase::args;
