@@ -13,6 +13,7 @@
 #include <string>
 #include <fstream>
 #include <vector>
+#include <map>
 
 #include "vulkan/vulkan.h"
 
@@ -30,6 +31,7 @@
 #include "VulkanTexture.hpp"
 
 #include <btBulletDynamicsCommon.h>
+#include <btBulletCollisionCommon.h>
 
 #if defined(__ANDROID__)
 #include <android/asset_manager.h>
@@ -53,6 +55,7 @@ namespace vks
             uint32_t indexBase;
             uint32_t indexCount;
             uint32_t materialIdx;
+            std::string name;
         };
         struct DrawCommand {
             uint32_t modelIndex;
@@ -64,6 +67,7 @@ namespace vks
         };
         struct Model {
             std::vector<ModelPart> parts;
+
             struct Dimension
             {
                 glm::vec3 min = glm::vec3(FLT_MAX);
@@ -116,19 +120,43 @@ namespace vks
             materials.push_back(mat);
             return materials.size()-1;
         }
-        btConvexHullShape* getConvexHullShape (uint32_t modelIdx, uint32_t partIdx) {
+        btConvexHullShape* getConvexHullShape (uint32_t modelIdx, uint32_t partIdx, float scale = 1.0f) {
             ModelPart* mod = &models[modelIdx].parts[partIdx];
             btConvexHullShape* shape  = new btConvexHullShape();
 
             for (int i = 0 ; i < mod->indexCount ; i++) {
                 float* pV = &vertexBuffer [(mod->vertexBase + indexBuffer[mod->indexBase + i])*8];
-                btVector3 v = btVector3(-pV[0], -pV[1], -pV[2]);
+                btVector3 v = btVector3(-pV[0] * scale, -pV[1] * scale, -pV[2] * scale);
                 shape->addPoint(v);
             }
             shape->optimizeConvexHull();
+            shape->initializePolyhedralFeatures();
             shape->setMargin(0.001);
+
             return shape;
         }
+        /*btConvexHullShape* getConvexHullShape2 (uint32_t modelIdx, uint32_t partIdx, float scale = 1.0f) {
+            ModelPart* mod = &models[modelIdx].parts[partIdx];
+            btConvexHullShape chs = convexHullShape(
+                    m_pPositions->GetVertexData(), m_pPositions->GetNumVertices(), m_pPositions->GetStride()*sizeof(float));
+
+            striding.
+            btConvexTriangleMeshShape tri = btConvexTriangleMeshShape()
+
+            btConvexHullShape* shape  = new btConvexHullShape();
+
+            for (int i = 0 ; i < mod->vertexCount ; i++) {
+                float* pV = &vertexBuffer [(mod->vertexBase + i)*8];
+                btVector3 v = btVector3(-pV[0] * scale, -pV[1] * scale, -pV[2] * scale);
+                shape->addPoint(v);
+            }
+            shape->optimizeConvexHull();
+
+            shape->setMargin(0.001);
+
+            return shape;
+        }*/
+
 
         static const int defaultFlags = aiProcess_FlipWindingOrder |
                 aiProcess_Triangulate | aiProcess_CalcTangentSpace | aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices;
@@ -254,11 +282,19 @@ namespace vks
             buildMaterialBuffer();
         }
 
+
+
         void buildCommandBuffer(VkCommandBuffer cmdBuff){
             uint32_t modIdx = instances[0].modelIndex;
             uint32_t partIdx = instances[0].partIndex;
             uint32_t instCount = 0;
             uint32_t instOffset = 0;
+
+            VkDeviceSize offsets[1] = { 0 };
+
+            vkCmdBindVertexBuffers(cmdBuff, 0, 1, &vertices.buffer, offsets);
+            vkCmdBindIndexBuffer(cmdBuff, indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdBindVertexBuffers(cmdBuff, 1, 1, &instanceBuff.buffer, offsets);
 
             for (int i = 0; i < instances.size(); i++){
                 if (modIdx != instances[i].modelIndex || partIdx != instances[i].partIndex) {
@@ -366,6 +402,7 @@ namespace vks
                     model.parts[i].vertexBase = vertexCount;
                     model.parts[i].indexBase = indexCount;
                     model.parts[i].materialIdx = 0;
+                    model.parts[i].name = std::string(paiMesh->mName.data);
 
                     vertexCount += paiMesh->mNumVertices;
 

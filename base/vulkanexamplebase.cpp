@@ -1963,6 +1963,22 @@ void VulkanExampleBase::mouseMoved(double x, double y, bool & handled) {}
 
 void VulkanExampleBase::buildCommandBuffers() {}
 
+void VulkanExampleBase::rebuildCommandBuffers() {
+    if (!prepared)
+    {
+        return;
+    }
+    prepared = false;
+
+    vkDeviceWaitIdle(device);
+
+    destroyCommandBuffers();
+    createCommandBuffers();
+    buildCommandBuffers();
+
+    prepared = true;
+}
+
 void VulkanExampleBase::createCommandPool()
 {
     VkCommandPoolCreateInfo cmdPoolInfo = {};

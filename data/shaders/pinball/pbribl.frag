@@ -149,9 +149,9 @@ vec4 distanceFieldFont () {
 }
 void main()
 {
-	if (inMatIdx==FONT_MAT_IDX) {
+	/*if (inMatIdx==FONT_MAT_IDX) {
 		outColor = distanceFieldFont ();
-	}
+	}*/
 
 	vec4 iDiff;
 	if (uboMat.materials[inMatIdx].diffColor.a > 0.0)

@@ -147,12 +147,8 @@ void VulkanExampleVk::buildCommandBuffers()
             vkCmdDrawIndexed(drawCmdBuffers[i], skybox.indexCount, 1, 0, 0, 0);
         }
 
-        // Objects
-        vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.matrices, 0, NULL);
-        vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &modGrp->vertices.buffer, offsets);
-        vkCmdBindIndexBuffer(drawCmdBuffers[i], modGrp->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdBindVertexBuffers(drawCmdBuffers[i], 1, 1, &modGrp->instanceBuff.buffer, offsets);
         vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.pbr);
+        vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.matrices, 0, NULL);
 
         OldMaterial mat = materials[materialIndex];
         mat.params.roughness = 0.1f;// 1.0f-glm::clamp((float)x / (float)objcount, 0.005f, 1.0f);
@@ -163,6 +159,9 @@ void VulkanExampleVk::buildCommandBuffers()
         vkCmdPushConstants(drawCmdBuffers[i], pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(glm::vec3), sizeof(OldMaterial::PushBlock), &mat);
 
         modGrp->buildCommandBuffer(drawCmdBuffers[i]);
+
+        additionalDrawCommands (drawCmdBuffers[i]);
+
 
         vkCmdEndRenderPass(drawCmdBuffers[i]);
 
@@ -350,11 +349,17 @@ void VulkanExampleVk::preparePipelines()
     VkPipelineRasterizationStateCreateInfo rasterizationState =
         vks::initializers::pipelineRasterizationStateCreateInfo(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE);
 
+    // Enable blending
     VkPipelineColorBlendAttachmentState blendAttachmentState =
-        vks::initializers::pipelineColorBlendAttachmentState(0xf, VK_FALSE);
-
-    VkPipelineColorBlendStateCreateInfo colorBlendState =
-        vks::initializers::pipelineColorBlendStateCreateInfo(1, &blendAttachmentState);
+        vks::initializers::pipelineColorBlendAttachmentState(0xf, VK_TRUE);
+    blendAttachmentState.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAttachmentState.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAttachmentState.colorBlendOp = VK_BLEND_OP_ADD;
+    blendAttachmentState.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAttachmentState.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAttachmentState.alphaBlendOp = VK_BLEND_OP_ADD;
+    blendAttachmentState.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo colorBlendState = vks::initializers::pipelineColorBlendStateCreateInfo(1, &blendAttachmentState);
 
     VkPipelineDepthStencilStateCreateInfo depthStencilState =
         vks::initializers::pipelineDepthStencilStateCreateInfo(VK_FALSE, VK_FALSE, VK_COMPARE_OP_LESS_OR_EQUAL);
@@ -1494,8 +1499,8 @@ void VulkanExampleVk::updateUniformBuffers()
 
 void VulkanExampleVk::updateParams()
 {
-    const float p = 15.0f;
-    uboParams.lights[0] = glm::vec4(-p, -p*0.5f, -p, 1.0f);
+    const float p = 4.0f;
+    uboParams.lights[0] = glm::vec4(10, -4.f, 10, 1.0f);
     uboParams.lights[1] = glm::vec4(-p, -p*0.5f,  p, 1.0f);
     uboParams.lights[2] = glm::vec4( p, -p*0.5f,  p, 1.0f);
     uboParams.lights[3] = glm::vec4( p, -p*0.5f, -p, 1.0f);

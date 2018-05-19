@@ -364,6 +364,7 @@ public:
     bool checkCommandBuffers();
     // Create command buffers for drawing commands
     void createCommandBuffers();
+    void rebuildCommandBuffers();
     // Destroy all command buffers and set their handles to VK_NULL_HANDLE
     // May be necessary during runtime if options are toggled
     void destroyCommandBuffers();
