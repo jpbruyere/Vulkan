@@ -19,7 +19,6 @@ class btVKDebugDrawer : public btIDebugDraw
 
 	std::vector<float>	vertices;
 	vks::Buffer			vertexBuff;
-	uint32_t			vertexCount = 0;
 	uint32_t			vBufferSize = 10000 * sizeof(float) * 6;
 
 
@@ -34,6 +33,8 @@ class btVKDebugDrawer : public btIDebugDraw
 	VkPipelineShaderStageCreateInfo loadShader(std::string fileName, VkShaderStageFlagBits stage);
 
 public:
+	uint32_t			vertexCount = 0;
+
 	void buildCommandBuffer (VkCommandBuffer cmd);
 
 	btVKDebugDrawer(vks::VulkanDevice *_device, VkRenderPass _renderPass, VkSampleCountFlagBits _sampleCount, VkDescriptorSetLayout _descriptorSetLayout);

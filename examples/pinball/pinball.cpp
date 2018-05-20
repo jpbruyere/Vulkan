@@ -47,6 +47,7 @@
 #define DOOR_BDI_ID 5
 #define SPIN_BDI_ID 6
 
+#define BT_DEBUG_DRAW false
 
 constexpr unsigned int str2int(const char* str, int h = 0)
 {
@@ -157,6 +158,14 @@ float flipperStrength = 0.0005f;
 float damperStrength = 0.04f;
 float bumperStrength = 0.02f;
 
+glm::mat4 btTransformToGlmMat (const btTransform &trans){
+    btVector3 o = trans.getOrigin();
+
+    btQuaternion btQ = trans.getRotation();
+    glm::quat q = glm::quat (btQ.getW(), btQ.getX(), btQ.getY(), btQ.getZ());
+
+    return glm::translate(glm::mat4(),glm::vec3(-o.getX(), -o.getY(), -o.getZ())) * glm::mat4(q);
+}
 
 class VulkanExample : public VulkanExampleVk
 {
@@ -258,6 +267,8 @@ public:
     float   fixedTimeStepDiv    = 1.0f / 600.0;
     float   maxSubsteps         = 10.f;
     int     subSteps            = 0;
+    clock_t lastTime;
+
 
     bool    splitImpulse        = false;
     const float inpulse     = 2.f;
@@ -272,9 +283,9 @@ public:
     btSequentialImpulseConstraintSolver* solver = nullptr;
     btDiscreteDynamicsWorld*            dynamicsWorld = nullptr;
 
+#if BT_DEBUG_DRAW
     btVKDebugDrawer* debugDrawer;
-
-    std::vector<btRigidBody*> btStaticObjs;
+#endif
 
     int movingObjectCount = 6;
 
@@ -295,8 +306,8 @@ public:
         modTargetsIdx = -1, modDoor1Idx = -1;
 
         modBallIdx = modGrp->addModel(getAssetPath() + "models/geosphere1.obj", ballSize);
-        //modFlipIdx = modGrp->addModel(getAssetPath() + "models/pinball-flip-hr.obj");
-        modFlipIdx  = modGrp->addModel(getAssetPath() + "models/pinball-flip.obj");
+        modFlipIdx = modGrp->addModel(getAssetPath() + "models/pinball-flip-hr.obj");
+        //modFlipIdx  = modGrp->addModel(getAssetPath() + "models/pinball-flip.obj");
         modDoor1Idx = modGrp->addModel(getAssetPath() + "models/pinball-door1.obj");
         modTargetsIdx = modGrp->addModel(getAssetPath() + "models/pinball-target-hr.obj");
         //modTestIdx = modGrp->addModel(getAssetPath() + "models/pinball.obj");
@@ -307,6 +318,7 @@ public:
             getAssetPath() + "flipper.png",
             getAssetPath() + "lcd.png",
             getAssetPath() + "test.png",
+            getAssetPath() + "items.png",
         };
 
         modGrp->addMaterial (0.9f,0.9f,0.9f,1, 0.9f,0.16f,0.f);
@@ -314,13 +326,14 @@ public:
         modGrp->addMaterial (1, 0.3f, 0.4f,0);
         modGrp->addMaterial (0.749585f, 0.756114f, 0.754256f, 1.0f, 0.7f, 0.02f, 0);
         modGrp->addMaterial (3, 0.f, 0.8f, 0);
+        modGrp->addMaterial (4, 0.3f, 0.4f,0);
         //modGrp->addMaterial(1.0f,0.0f,1.0f,1.0f, 1.f, 1.f, 0);
 
         worldObjs[worldObjBall].instanceIdx = modGrp->addInstance(modBallIdx, 0);
 
-        worldObjs[worldObjFlip].instanceIdx = modGrp->addInstance(modFlipIdx, 2);
-        worldObjs[worldObjFlip+1].instanceIdx = modGrp->addInstance(modFlipIdx, 2);
-        worldObjs[worldObjFlip+2].instanceIdx = modGrp->addInstance(modFlipIdx, 2);
+        worldObjs[worldObjFlip].instanceIdx = modGrp->addInstance(modFlipIdx, 5);
+        worldObjs[worldObjFlip+1].instanceIdx = modGrp->addInstance(modFlipIdx, 5);
+        worldObjs[worldObjFlip+2].instanceIdx = modGrp->addInstance(modFlipIdx, 5);
 
         worldObjs[worldObjDoor1].instanceIdx = modGrp->addInstance(modDoor1Idx, 0);
 
@@ -373,115 +386,56 @@ public:
         init_physics();
     }
 
-    void preparePipelines() {
-        VulkanExampleVk::preparePipelines();
-
-        debugDrawer = new btVKDebugDrawer(vulkanDevice, renderPass, sampleCount, descriptorSetLayout);
-        debugDrawer->setDebugMode(
-                    btIDebugDraw::DBG_DrawConstraintLimits|
-                    btIDebugDraw::DBG_DrawFrames|
-                    btIDebugDraw::DBG_DrawContactPoints|
-                    btIDebugDraw::DBG_DrawConstraints|
-                    btIDebugDraw::DBG_DrawWireframe);
-
-        dynamicsWorld->setDebugDrawer (debugDrawer);
-
-
-    }
-    glm::mat4 btTransformToGlmMat (const btTransform &trans){
-        btVector3 o = trans.getOrigin();
-
-        btQuaternion btQ = trans.getRotation();
-        glm::quat q = glm::quat (btQ.getW(), btQ.getX(), btQ.getY(), btQ.getZ());
-
-        return glm::translate(glm::mat4(),glm::vec3(-o.getX(), -o.getY(), -o.getZ())) * glm::mat4(q);
-    }
-
-    /*void addRigidBody (btCollisionShape* shape, btScalar mass = 0, btTransform transformation){
+    btRigidBody* addRigidBody (btCollisionShape* shape, int group = 0, int mask = 0xffff, btScalar restitution = 0., btScalar friction = 0., btScalar mass = 0, btTransform transformation = btTransform()){
         btRigidBody* body = nullptr;
-        btVector3 fallInertia(0, 0, 0);
-        btHingeConstraint* hinge;
         btMotionState* motionState = nullptr;
+        btVector3 fallInertia(0, 0, 0);
 
-        if (mass > 0.f){
+        if (mass > 0.f)   {
             shape->calculateLocalInertia(mass, fallInertia);
             motionState = new btDefaultMotionState(transformation);
         }
 
-
-        btRigidBody::btRigidBodyConstructionInfo rbci(mass, motionState, shape, btVector3(0, 0, 0));
-        rbci.m_restitution = 0;
-        rbci.m_friction = 1.3;
+        btRigidBody::btRigidBodyConstructionInfo rbci(mass, motionState, shape, fallInertia);
+        rbci.m_restitution = restitution;
+        rbci.m_friction = friction;
 
         body = new btRigidBody(rbci);
-    }*/
+        dynamicsWorld->addRigidBody(body, group, mask);
+        return body;
+    }
     void initPhysicalBodies () {
         vks::ModelGroup* modBodies = new vks::ModelGroup(vulkanDevice, queue);
 
         btCollisionShape* shape = nullptr;
         btRigidBody* body = nullptr;
+        btRigidBody::btRigidBodyConstructionInfo rbci(0, nullptr, shape, btVector3(0, 0, 0));
+
         int modBodiesIdx = -1;
 
         //low plane
         shape = new btStaticPlaneShape(upVector, 0);
         shape->setMargin(0.001);
-
-        btRigidBody::btRigidBodyConstructionInfo rbci(0, nullptr, shape, btVector3(0, 0, 0));
-        rbci.m_restitution = 0;
-        rbci.m_friction = 1.3;
-        btStaticObjs.push_back(new btRigidBody(rbci));
+        addRigidBody(shape, 0x02,0x01, 0.1, 0.5);
 
         //static bodies
         modBodiesIdx = modBodies->addModel(getAssetPath() + "models/pinball-static.obj");
-        for (int i = 0; i<modBodies->models[modBodiesIdx].parts.size() ; i++) {
-            shape = modBodies->getConvexHullShape(modBodiesIdx, i);
-            rbci = btRigidBody::btRigidBodyConstructionInfo (0, nullptr, shape , btVector3(0, 0, 0));
-            rbci.m_restitution = 0.8;
-            rbci.m_friction = 0.2;
-            btStaticObjs.push_back (new btRigidBody(rbci));
-        }
-        //ramp
-        /*modBodiesIdx = modBodies->addModel(getAssetPath() + "models/pinball-ramp.obj");
-        for (int i = 0; i<modBodies->models[modBodiesIdx].parts.size() ; i++) {
-            shape = modBodies->getConvexHullShape(modBodiesIdx, i);
-            rbci = btRigidBody::btRigidBodyConstructionInfo (0, nullptr, shape , btVector3(0, 0, 0));
-            rbci.m_restitution = 0.;
-            rbci.m_friction = 0.;
-            btStaticObjs.push_back(new btRigidBody(rbci));
-        }*/
+        for (int i = 0; i<modBodies->models[modBodiesIdx].parts.size() ; i++)
+            addRigidBody (modBodies->getConvexHullShape(modBodiesIdx, i), 0x02,0x01, 0.8, 0.2);
 
         //damper
         modBodiesIdx = modBodies->addModel(getAssetPath() + "models/pinball-damp.obj");
-        for (int i = 0; i<modBodies->models[modBodiesIdx].parts.size() ; i++) {
-            shape = modBodies->getConvexHullShape(modBodiesIdx, i);
-            rbci = btRigidBody::btRigidBodyConstructionInfo (0, nullptr, shape, btVector3(0, 0, 0));
-            rbci.m_restitution = 0.;
-            rbci.m_friction = 0.1;
-
-            body = new btRigidBody(rbci);
-
-            dynamicsWorld->addRigidBody(body);
-            body->setUserIndex(DAMP_BDY_ID);
-        }
+        for (int i = 0; i<modBodies->models[modBodiesIdx].parts.size() ; i++)
+            addRigidBody (modBodies->getConvexHullShape(modBodiesIdx, i), 0x02,0x01, 0., 0.1)
+                    ->setUserIndex(DAMP_BDY_ID);
 
         //targets
         modBodiesIdx = modBodies->addModel(getAssetPath() + "models/pinball-target.obj");
         for (int i = 0; i<modBodies->models[modBodiesIdx].parts.size() ; i++) {
-            shape = modBodies->getConvexHullShape(modBodiesIdx, i);
-            rbci = btRigidBody::btRigidBodyConstructionInfo (0, nullptr, shape, btVector3(0, 0, 0));
-            rbci.m_restitution = 0.5;
-            rbci.m_friction = 0.1;
-
-            body = new btRigidBody(rbci);
-
-            dynamicsWorld->addRigidBody(body);
+            body = addRigidBody (modBodies->getConvexHullShape(modBodiesIdx, i), 0x02,0x01, 0.5, 0.1);
             body->setUserIndex(TARG_BDY_ID);
             body->setUserIndex2(i);
             leftTargetGroup.targets[i].body = body;
-        }
-
-        for(std::vector<btRigidBody*>::iterator it = btStaticObjs.begin(); it != btStaticObjs.end(); ++it) {
-            dynamicsWorld->addRigidBody ((btRigidBody*)*it,0x02,0x01);
         }
 
         modBodiesIdx = modBodies->addModel(getAssetPath() + "models/pinball-flip.obj");
@@ -491,47 +445,17 @@ public:
         btHingeConstraint* hinge;
         btMotionState* motionState;
 
-        //tests
-        /*modBodiesIdx = modBodies->addModel(getAssetPath() + "models/pinball.obj");
-        for (int i = 0; i<modBodies->models[modBodiesIdx].parts.size() ; i++) {
-            mass = 0.6;
-            shape = modBodies->getConvexHullShape(modBodiesIdx, i);
-            shape->calculateLocalInertia(mass, fallInertia);
-            motionState = new btDefaultMotionState(
-                        btTransform(btQuaternion(0, 0, 0, 1), btVector3(0, 0, 0)));
-            rbci = btRigidBody::btRigidBodyConstructionInfo (mass, motionState, shape , btVector3(0, 0, 0));
-            rbci.m_restitution = 0.8;
-            rbci.m_friction = 0.2;
-            body = new btRigidBody(rbci);
-            body->setLinearFactor(btVector3(0,0,1));
-            dynamicsWorld->addRigidBody(body,0x02,0x01);
-            worldObjs[6+i].body = body;
-        }*/
-
         //flippers
-        mass = 0.08;
+        mass = 0.09;
         shape = modBodies->getConvexHullShape(modBodiesIdx, 0);
-        //shape->setMargin(0.005);
         shape->calculateLocalInertia(mass, fallInertia);
 
         //right
-        btVector3 pos = btVector3(0.09194,0.01479,0.39887);
-        btTransform trBody = btTransform(btQuaternion(0, 0, 0, 1), pos);
-        trBody = btTransform(btQuaternion(btVector3(1,0,0), 7.f * M_PI / 180.0), btVector3(0,0,0)) * trBody;
+        btTransform trBody;
 
-        motionState = new btDefaultMotionState(trBody);
-
-        rbci = btRigidBody::btRigidBodyConstructionInfo (mass, motionState, shape, fallInertia);
-        rbci.m_restitution = 0.8;
-        rbci.m_friction = 0.2;
-
-        body = new btRigidBody(rbci);
-
-        //body->setCollisionFlags(128);
-        //body->setContactStiffnessAndDamping(9999,10);
-
-
-        dynamicsWorld->addRigidBody(body,0x02,0x01);
+        body = addRigidBody (shape, 0x02,0x01, 0.1, 0.2, mass,
+                    btTransform(btQuaternion(btVector3(1,0,0), 7.f * M_PI / 180.0), btVector3(0,0,0)) *
+                    btTransform(btQuaternion(btVector3(0,0,1), M_PI), btVector3(0.09194,0.01479,0.39887)));
 
         worldObjs[worldObjFlip].body = body;
 
@@ -540,50 +464,30 @@ public:
         dynamicsWorld->addConstraint(hinge);
 
         //left
-        pos = btVector3(-0.09194,0.01479,0.39887);
-        trBody = btTransform(btQuaternion(0, 0, 0, 1), pos);
-        trBody = btTransform(btQuaternion(btVector3(1,0,0), 7.f * M_PI / 180.0), btVector3(0,0,0)) * trBody;
+        body = addRigidBody (shape, 0x02,0x01, 0.1, 0.2, mass,
+                    btTransform(btQuaternion(btVector3(1,0,0), 7.f * M_PI / 180.0), btVector3(0,0,0)) *
+                    btTransform(btQuaternion(0, 0, 0, 1), btVector3(-0.09194,0.01479,0.39887)));
 
-        motionState = new btDefaultMotionState(trBody);
-
-        rbci = btRigidBody::btRigidBodyConstructionInfo (mass, motionState, shape, fallInertia);
-        rbci.m_restitution = 0.;
-        rbci.m_friction = 0.2;
-        body = new btRigidBody(rbci);
-
-        dynamicsWorld->addRigidBody(body,0x02,0x01);
+        worldObjs[worldObjFlip+1].body = body;
 
         hinge = new btHingeConstraint (*body, btVector3(0,0,0), vUp, false);
         hinge->setLimit (-0.5, 0.6, .001f,1.0f,-0.001f);
         dynamicsWorld->addConstraint(hinge);
 
-        worldObjs[worldObjFlip+1].body = body;
 
         //top left
         shape = modBodies->getConvexHullShape(modBodiesIdx, 0, 0.92f);
-        //shape->setLocalScaling(btVector3(0.92,0.92,0.92));
-        shape->setMargin(0.00);
         shape->calculateLocalInertia(mass, fallInertia);
 
-        pos = btVector3(-0.22988,0.01479,-0.07538);
+        body = addRigidBody (shape, 0x02,0x01, 0.1, 0.2, mass,
+                    btTransform(btQuaternion(btVector3(1,0,0), 7.f * M_PI / 180.0), btVector3(0,0,0)) *
+                    btTransform(btQuaternion(0, 0, 0, 1), btVector3(-0.22988,0.01479,-0.07538)));
 
-        trBody = btTransform(btQuaternion(0, 0, 0, 1), pos);
-        trBody = btTransform(btQuaternion(btVector3(1,0,0), 7.f * M_PI / 180.0), btVector3(0,0,0)) * trBody;
-
-        motionState = new btDefaultMotionState(trBody);
-
-        rbci = btRigidBody::btRigidBodyConstructionInfo (mass, motionState, shape, fallInertia);
-        rbci.m_restitution = 0.;
-        rbci.m_friction = 0.2;
-        body = new btRigidBody(rbci);
-
-        dynamicsWorld->addRigidBody(body,0x02,0x01);
+        worldObjs[worldObjFlip+2].body = body;
 
         hinge = new btHingeConstraint (*body, btVector3(0,0,0), vUp, false);
         hinge->setLimit (-1.20, 0., .001f,1.0f,-0.001f);
         dynamicsWorld->addConstraint(hinge);
-
-        worldObjs[worldObjFlip+2].body = body;
 
         //door 1
         modBodiesIdx = modBodies->addModel(getAssetPath() + "models/pinball-door1.obj");
@@ -592,26 +496,17 @@ public:
         mass = 0.003;
         shape->calculateLocalInertia(mass, fallInertia);
 
-        pos = btVector3(0.28105,0,-0.27905);
-        trBody = btTransform(btQuaternion(0, 0, 0, 1), pos);
-        trBody = btTransform(btQuaternion(btVector3(1,0,0), 7.f * M_PI / 180.0), btVector3(0,0,0)) * trBody;
-
-        motionState = new btDefaultMotionState(trBody);
-
-        rbci = btRigidBody::btRigidBodyConstructionInfo (mass, motionState, shape, fallInertia);
-        rbci.m_restitution = 0.;
-        rbci.m_friction = 0.01;
-        body = new btRigidBody(rbci);
+        body = addRigidBody (shape, 0x02,0x01, 0., 0.01, mass,
+                    btTransform(btQuaternion(btVector3(1,0,0), 7.f * M_PI / 180.0), btVector3(0,0,0)) *
+                    btTransform(btQuaternion(0, 0, 0, 1), btVector3(0.28105,0,-0.27905)));
         body->setUserIndex(DOOR_BDI_ID);
         body->setUserIndex2(1);
 
-        dynamicsWorld->addRigidBody(body,0x02,0x01);
+        worldObjs[worldObjDoor1].body = body;
 
         hinge = new btHingeConstraint (*body, btVector3(0,0,0), vUp, false);
         hinge->setLimit (0.148, 1., 0.01f,1.f,-0.001f);
         dynamicsWorld->addConstraint(hinge);
-
-        worldObjs[worldObjDoor1].body = body;
 
         //spinner
         modBodiesIdx = modBodies->addModel(getAssetPath() + "models/pinball-spinner.obj");
@@ -620,27 +515,18 @@ public:
         mass = 0.01;
         shape->calculateLocalInertia(mass, fallInertia);
 
-        pos = btVector3(0.24554,0.02731,-0.13162);
-        trBody = btTransform(btQuaternion(btVector3(0,1,0), -21.f * M_PI / 180.0), pos);
-        trBody = btTransform(btQuaternion(btVector3(1,0,0), 7.f * M_PI / 180.0), btVector3(0,0,0)) * trBody;
-
-        motionState = new btDefaultMotionState(trBody);
-
-        rbci = btRigidBody::btRigidBodyConstructionInfo (mass, motionState, shape, fallInertia);
-        rbci.m_restitution = 0.;
-        rbci.m_friction = 0.01;
-
-        body = new btRigidBody(rbci);
+        trBody = btTransform(btQuaternion(btVector3(1,0,0), 7.f * M_PI / 180.0), btVector3(0,0,0)) *
+                btTransform(btQuaternion(btVector3(0,1,0), -21.f * M_PI / 180.0), btVector3(0.24554,0.02731,-0.13162));
+        body = addRigidBody (shape, 0x02,0x01, 0., 0.01, mass, trBody);
         body->setUserIndex(SPIN_BDI_ID);
         body->setUserIndex2(1);
 
-        dynamicsWorld->addRigidBody(body,0x02,0x01);
+        worldObjs[worldObjSpinner].body = body;
 
         hinge = new btHingeConstraint (*body, btVector3(0,0.006,0), btVector3(1,0,0), false);
         hinge->setLimit (0., 2 * M_PI, 0.1f, 0.f,-1.0f);
         dynamicsWorld->addConstraint(hinge);
 
-        worldObjs[worldObjSpinner].body = body;
         //move spinner frame which is static, not move by physic update
         modGrp->instanceDatas [instSpinnerFrameIdx].modelMat = btTransformToGlmMat (trBody);
 
@@ -653,42 +539,23 @@ public:
         modBodiesIdx = modBodies->addModel(getAssetPath() + "models/pinball-bump.obj");
         shape = modBodies->getConvexHullShape(modBodiesIdx, 0);
         for (int i = 0; i<3 ; i++) {
-            pos = bumperPos[i];
-            trBody = btTransform(btQuaternion(0, 0, 0, 1), pos);
-            trBody = btTransform(btQuaternion(btVector3(1,0,0), 7.f * M_PI / 180.0), btVector3(0,0,0)) * trBody;
+            trBody = btTransform(btQuaternion(btVector3(1,0,0), 7.f * M_PI / 180.0), btVector3(0,0,0)) *
+                    btTransform(btQuaternion(0, 0, 0, 1), bumperPos[i]);
 
-            rbci = btRigidBody::btRigidBodyConstructionInfo (0, nullptr, shape, btVector3(0, 0, 0));
-            rbci.m_restitution = 1.2;
-            rbci.m_friction = 0.;
-
-            body = new btRigidBody(rbci);
-            body->setWorldTransform (trBody);
-
-            dynamicsWorld->addRigidBody(body);
+            body = addRigidBody (shape, 0x02,0x01, 1.2, 0.0, 0, trBody);
             body->setUserIndex(BUMP_BDY_ID);
-
+            body->setWorldTransform (trBody);
             modGrp->instanceDatas [instBumperIdx+i].modelMat = btTransformToGlmMat (trBody);
         }
 
         //balls
         shape = new btSphereShape(ballSize * 0.5);
-        //shape->setMargin(0.0002);
         mass = 0.08;
         shape->calculateLocalInertia(mass, fallInertia);
 
         for (int i=0; i < 1; i++) {
-            motionState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), btVector3(0.0,0,0)));
-
-            rbci = btRigidBody::btRigidBodyConstructionInfo (mass, motionState, shape, fallInertia);
-            rbci .m_restitution = 0.5f;
-            rbci .m_friction = 0.2;
-
-            //ballRigidBodyCI.m_rollingFriction = 0.000001;
-            body = new btRigidBody (rbci);
-            dynamicsWorld->addRigidBody (body,0x01,0xff);
-
+            body = addRigidBody (shape, 0x01,0xff, 0.5, 0.01, mass, btTransform(btQuaternion(0, 0, 0, 1), btVector3(0.0,0,0)));
             body->setUserIndex             (BALL_BDY_ID);
-            body->setFriction              (0.01f);
             body->setRollingFriction       (.00001);
             body->setSpinningFriction      (0.1);
             body->setAnisotropicFriction   (shape->getAnisotropicRollingFrictionDirection(),
@@ -699,11 +566,9 @@ public:
             worldObjs[worldObjBall].body = body;
         }
 
-
         modBodies->destroy();
         delete(modBodies);
     }
-
 
     void init_physics() {
         broadphase = new btDbvtBroadphase();
@@ -748,7 +613,6 @@ public:
         modGrp->updateInstancesBuffer();
     }
 
-    clock_t lastTime;
 
     void step_physics () {
 //        btTransform trA = worldObjs[2].body->getWorldTransform();
@@ -885,17 +749,38 @@ public:
             break;
         }
     }
+
+#if BT_DEBUG_DRAW
+    void preparePipelines() {
+        VulkanExampleVk::preparePipelines();
+
+        debugDrawer = new btVKDebugDrawer(vulkanDevice, renderPass, sampleCount, descriptorSetLayout);
+        debugDrawer->setDebugMode(
+                    btIDebugDraw::DBG_DrawConstraintLimits|
+                    btIDebugDraw::DBG_DrawFrames|
+                    btIDebugDraw::DBG_DrawContactPoints|
+                    btIDebugDraw::DBG_DrawConstraints|
+                    btIDebugDraw::DBG_DrawWireframe);
+
+        dynamicsWorld->setDebugDrawer (debugDrawer);
+
+
+    }
     void additionalDrawCommands(VkCommandBuffer cmd) {
         debugDrawer->buildCommandBuffer (cmd);
     }
+#endif
+
     virtual void render()
     {
         if (!prepared)
             return;
         step_physics();
+#if BT_DEBUG_DRAW
         dynamicsWorld->debugDrawWorld();
-
-        rebuildCommandBuffers();
+        if (debugDrawer->vertexCount>0)
+            rebuildCommandBuffers();
+#endif
 
         draw();
     }
