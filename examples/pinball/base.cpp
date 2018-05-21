@@ -1757,8 +1757,6 @@ void VulkanExampleVk::setupFrameBuffer()
 
 void VulkanExampleVk::prepare()
 {
-    sampleCount = VK_SAMPLE_COUNT_1_BIT;
-
     VulkanExampleBase::prepare();
 
     loadAssets();

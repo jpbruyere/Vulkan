@@ -65,15 +65,16 @@ namespace vks
             uint32_t materialIndex = 0;
             glm::mat4 modelMat = glm::mat4();
         };
+        struct Dimension
+        {
+            glm::vec3 min = glm::vec3(FLT_MAX);
+            glm::vec3 max = glm::vec3(-FLT_MAX);
+            glm::vec3 size;
+        };
         struct Model {
+            Dimension dimensions;
             std::vector<ModelPart> parts;
-
-            struct Dimension
-            {
-                glm::vec3 min = glm::vec3(FLT_MAX);
-                glm::vec3 max = glm::vec3(-FLT_MAX);
-                glm::vec3 size;
-            } dim;
+            std::vector<Dimension> partDims;
         };
 
         std::vector<DrawCommand> instances;
@@ -392,6 +393,7 @@ namespace vks
 
                 Model model;
                 model.parts.resize(pScene->mNumMeshes);
+                model.partDims.resize(pScene->mNumMeshes);
 
                 // Load meshes
                 for (unsigned int i = 0; i < pScene->mNumMeshes; i++)
@@ -407,6 +409,7 @@ namespace vks
                     vertexCount += paiMesh->mNumVertices;
 
                     const aiVector3D Zero3D(0.0f, 0.0f, 0.0f);
+                    Dimension partDim;
 
                     for (unsigned int j = 0; j < paiMesh->mNumVertices; j++)
                     {
@@ -461,17 +464,20 @@ namespace vks
                             };
                         }
 
-                        model.dim.max.x = fmax(pPos->x, model.dim.max.x);
-                        model.dim.max.y = fmax(pPos->y, model.dim.max.y);
-                        model.dim.max.z = fmax(pPos->z, model.dim.max.z);
 
-                        model.dim.min.x = fmin(pPos->x, model.dim.min.x);
-                        model.dim.min.y = fmin(pPos->y, model.dim.min.y);
-                        model.dim.min.z = fmin(pPos->z, model.dim.min.z);
+                        partDim.max.x = fmax(pPos->x, partDim.max.x);
+                        partDim.max.y = fmax(pPos->y, partDim.max.y);
+                        partDim.max.z = fmax(pPos->z, partDim.max.z);
+
+                        partDim.min.x = fmin(pPos->x, partDim.min.x);
+                        partDim.min.y = fmin(pPos->y, partDim.min.y);
+                        partDim.min.z = fmin(pPos->z, partDim.min.z);
+
                     }
 
-                    model.dim.size = model.dim.max - model.dim.min;
+                    partDim.size = partDim.max - partDim.min;
 
+                    model.partDims[i] = partDim;
                     model.parts[i].vertexCount = paiMesh->mNumVertices;
 
                     for (unsigned int j = 0; j < paiMesh->mNumFaces; j++)
@@ -485,7 +491,18 @@ namespace vks
                         model.parts[i].indexCount += 3;
                         indexCount += 3;
                     }
+
+                    model.dimensions.max.x = fmax(partDim.max.x, model.dimensions.max.x);
+                    model.dimensions.max.y = fmax(partDim.max.y, model.dimensions.max.y);
+                    model.dimensions.max.z = fmax(partDim.max.z, model.dimensions.max.z);
+
+                    model.dimensions.min.x = fmin(partDim.min.x, model.dimensions.min.x);
+                    model.dimensions.min.y = fmin(partDim.min.y, model.dimensions.min.y);
+                    model.dimensions.min.z = fmin(partDim.min.z, model.dimensions.min.z);
                 }
+
+                model.dimensions.size = model.dimensions.max - model.dimensions.min;
+
                 models.push_back(model);
                 return modelIndex;
             }else{
