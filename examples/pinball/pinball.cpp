@@ -38,7 +38,7 @@
 
 #include "btvkdebugdrawer.h"
 
-#define ENABLE_VALIDATION false
+#define ENABLE_VALIDATION 1
 
 
 //target id's stored in userIndex of body instance
@@ -50,7 +50,7 @@
 //target id range from TARG_BDY_ID + targetGroups.size, target index is in userIndex2 of body instance
 #define TARG_BDY_ID 50
 
-#define BT_DEBUG_DRAW false
+#define BT_DEBUG_DRAW 0
 
 constexpr unsigned int str2int(const char* str, int h = 0)
 {
@@ -811,20 +811,18 @@ public:
     void preparePipelines() {
         VulkanExampleVk::preparePipelines();
 
-        debugDrawer = new btVKDebugDrawer(vulkanDevice, renderPass, sampleCount, descriptorSetLayout);
+        debugDrawer = new btVKDebugDrawer (vulkanDevice, swapChain, depthStencil, sampleCount, frameBuffers, descriptorSets.matrices);
         debugDrawer->setDebugMode(
                     btIDebugDraw::DBG_DrawConstraintLimits|
                     btIDebugDraw::DBG_DrawFrames|
                     btIDebugDraw::DBG_DrawContactPoints|
-                    btIDebugDraw::DBG_DrawConstraints|
-                    btIDebugDraw::DBG_DrawWireframe);
+                    btIDebugDraw::DBG_DrawConstraints
+                    //btIDebugDraw::DBG_DrawWireframe
+                    );
 
         dynamicsWorld->setDebugDrawer (debugDrawer);
 
 
-    }
-    void additionalDrawCommands(VkCommandBuffer cmd) {
-        debugDrawer->buildCommandBuffer (cmd);
     }
 #endif
 
@@ -836,12 +834,58 @@ public:
 #if BT_DEBUG_DRAW
         dynamicsWorld->debugDrawWorld();
         if (debugDrawer->vertexCount>0)
-            rebuildCommandBuffers();
+            debugDrawer->buildCommandBuffer ();
 #endif
-
         draw();
     }
 
+    virtual void submitFrame() {
+        bool submitOverlay = settings.overlay && UIOverlay->visible;
+
+#if BT_DEBUG_DRAW
+        debugDrawer->submit(queue, currentBuffer, semaphores.renderComplete);
+#endif
+        if (submitOverlay) {
+            // Wait for color attachment output to finish before rendering the text overlay
+            VkPipelineStageFlags stageFlags = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            submitInfo.pWaitDstStageMask = &stageFlags;
+
+            // Set semaphores
+            // Wait for render complete semaphore
+            submitInfo.waitSemaphoreCount = 1;
+#if BT_DEBUG_DRAW
+            submitInfo.pWaitSemaphores = &debugDrawer->drawComplete;
+#else
+            submitInfo.pWaitSemaphores = &semaphores.renderComplete;
+#endif
+            // Signal ready with UI overlay complete semaphpre
+            submitInfo.signalSemaphoreCount = 1;
+            submitInfo.pSignalSemaphores = &semaphores.overlayComplete;
+
+            // Submit current UI overlay command buffer
+            submitInfo.commandBufferCount = 1;
+            submitInfo.pCommandBuffers = &UIOverlay->cmdBuffers[currentBuffer];
+            VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+
+            // Reset stage mask
+            submitInfo.pWaitDstStageMask = &submitPipelineStages;
+            // Reset wait and signal semaphores for rendering next frame
+            // Wait for swap chain presentation to finish
+            submitInfo.waitSemaphoreCount = 1;
+            submitInfo.pWaitSemaphores = &semaphores.presentComplete;
+            // Signal ready with offscreen semaphore
+            submitInfo.signalSemaphoreCount = 1;
+            submitInfo.pSignalSemaphores = &semaphores.renderComplete;
+        }
+
+#if BT_DEBUG_DRAW
+        VK_CHECK_RESULT(swapChain.queuePresent(queue, currentBuffer, submitOverlay ? semaphores.overlayComplete : debugDrawer->drawComplete));
+#else
+        VK_CHECK_RESULT(swapChain.queuePresent(queue, currentBuffer, submitOverlay ? semaphores.overlayComplete : semaphores.renderComplete));
+#endif
+
+        VK_CHECK_RESULT(vkQueueWaitIdle(queue));
+    }
      virtual void OnUpdateUIOverlay(vks::UIOverlay *overlay)
     {
         if (overlay->header("Settings")) {

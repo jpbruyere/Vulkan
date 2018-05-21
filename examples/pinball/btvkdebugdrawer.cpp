@@ -1,17 +1,52 @@
 #include "btvkdebugdrawer.h"
 
-
-btVKDebugDrawer::btVKDebugDrawer(vks::VulkanDevice *_device, VkRenderPass _renderPass, VkSampleCountFlagBits _sampleCount, VkDescriptorSetLayout _descriptorSetLayout)
+const VkPipelineStageFlags stageFlags = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+btVKDebugDrawer::btVKDebugDrawer(vks::VulkanDevice* _device, VulkanSwapChain _swapChain, vks::Image *_depthImg, VkSampleCountFlagBits _sampleCount,
+                                 std::vector<VkFramebuffer>&_frameBuffers, VkDescriptorSet _dsUboMatrices)
 :m_debugMode(0)
 {
-    device = _device->logicalDevice;
-    renderPass = _renderPass;
+    swapChain   = _swapChain;
+    device      = _device;
+    imgDepth    = _depthImg;
     sampleCount = _sampleCount;
-    descriptorSetLayout = _descriptorSetLayout;
+    frameBuffers= _frameBuffers;
+    dsUboMatrices= _dsUboMatrices;
 
+    prepareRenderPass();
+
+    fence       = device->createFence();
+    drawComplete= device->createSemaphore();
+
+
+    submitInfo = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submitInfo.pWaitDstStageMask = &stageFlags;
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = &drawComplete;
+
+    // Command buffer
+    VkCommandPoolCreateInfo cmdPoolInfo = {};
+    cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    cmdPoolInfo.queueFamilyIndex = device->queueFamilyIndices.graphics;
+    cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    VK_CHECK_RESULT(vkCreateCommandPool(device->logicalDevice, &cmdPoolInfo, nullptr, &commandPool));
+
+    cmdBuffers.resize(swapChain.imageCount);
+
+    VkCommandBufferAllocateInfo cmdBufAllocateInfo =
+        vks::initializers::commandBufferAllocateInfo(commandPool, VK_COMMAND_BUFFER_LEVEL_PRIMARY, static_cast<uint32_t>(cmdBuffers.size()));
+    VK_CHECK_RESULT(vkAllocateCommandBuffers(device->logicalDevice, &cmdBufAllocateInfo, cmdBuffers.data()));
+
+
+    // Command buffer execution fence
+    VkFenceCreateInfo fenceCreateInfo = vks::initializers::fenceCreateInfo();
+    VK_CHECK_RESULT(vkCreateFence(device->logicalDevice, &fenceCreateInfo, nullptr, &fence));
+
+
+    prepareDescriptors();
     preparePipeline ();
 
-    VK_CHECK_RESULT(_device->createBuffer(
+    VK_CHECK_RESULT(device->createBuffer(
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         &vertexBuff ,
@@ -25,10 +60,120 @@ btVKDebugDrawer::~btVKDebugDrawer()
     vertexBuff.unmap();
     vertexBuff.destroy();
 
-    vkDestroyPipeline(device, pipeline, VK_NULL_HANDLE);
-    vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-}
+    vkDestroyRenderPass     (device->logicalDevice, renderPass, VK_NULL_HANDLE);
+    vkDestroyPipeline       (device->logicalDevice, pipeline, VK_NULL_HANDLE);
+    vkDestroyPipelineLayout (device->logicalDevice, pipelineLayout, VK_NULL_HANDLE);
 
+    device->destroyFence        (fence);
+    device->destroySemaphore    (drawComplete);
+}
+void btVKDebugDrawer::prepareRenderPass()
+{
+    VkAttachmentDescription attachments[2] = {};
+
+    // Color attachment
+    attachments[0].format = swapChain.colorFormat;
+    attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[0].initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    // Depth attachment
+    attachments[1].format = imgDepth->infos.format;
+    attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference colorReference = {};
+    colorReference.attachment = 0;
+    colorReference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference depthReference = {};
+    depthReference.attachment = 1;
+    depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDependency subpassDependencies[2] = {};
+
+    // Transition from final to initial (VK_SUBPASS_EXTERNAL refers to all commmands executed outside of the actual renderpass)
+    subpassDependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    subpassDependencies[0].dstSubpass = 0;
+    subpassDependencies[0].srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    subpassDependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    subpassDependencies[0].srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+    subpassDependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    subpassDependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+    // Transition from initial to final
+    subpassDependencies[1].srcSubpass = 0;
+    subpassDependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    subpassDependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    subpassDependencies[1].dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    subpassDependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    subpassDependencies[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+    subpassDependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+    VkSubpassDescription subpassDescription = {};
+    subpassDescription.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpassDescription.flags = 0;
+    subpassDescription.inputAttachmentCount = 0;
+    subpassDescription.pInputAttachments = NULL;
+    subpassDescription.colorAttachmentCount = 1;
+    subpassDescription.pColorAttachments = &colorReference;
+    subpassDescription.pResolveAttachments = NULL;
+    subpassDescription.pDepthStencilAttachment = &depthReference;
+    subpassDescription.preserveAttachmentCount = 0;
+    subpassDescription.pPreserveAttachments = NULL;
+
+    VkRenderPassCreateInfo renderPassInfo = {};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    renderPassInfo.pNext = NULL;
+    renderPassInfo.attachmentCount = 2;
+    renderPassInfo.pAttachments = attachments;
+    renderPassInfo.subpassCount = 1;
+    renderPassInfo.pSubpasses = &subpassDescription;
+    renderPassInfo.dependencyCount = 2;
+    renderPassInfo.pDependencies = subpassDependencies;
+
+    VK_CHECK_RESULT(vkCreateRenderPass(device->logicalDevice, &renderPassInfo, nullptr, &renderPass));
+}
+void btVKDebugDrawer::prepareDescriptors()
+{
+    // Descriptor pool
+    std::vector<VkDescriptorPoolSize> poolSizes = {
+        vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1),
+        //vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1)
+    };
+
+    VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 2);
+    VK_CHECK_RESULT(vkCreateDescriptorPool(device->logicalDevice, &descriptorPoolInfo, nullptr, &descriptorPool));
+
+    // Descriptor set layout
+    std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings = {
+        vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0),
+        //vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1),
+    };
+
+    VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
+    VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device->logicalDevice, &descriptorLayout, nullptr, &descriptorSetLayout));
+
+    // Descriptor set
+    /*VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayout, 1);
+    VK_CHECK_RESULT(vkAllocateDescriptorSets(device->logicalDevice, &allocInfo, &descriptorSet));
+
+    VK_CHECK_RESULT(vkAllocateDescriptorSets(device->logicalDevice, &allocInfo, &descriptorSets.matrices));
+    std::vector<VkWriteDescriptorSet> writeDescriptorSets = {
+        vks::initializers::writeDescriptorSet(descriptorSets.matrices, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &ubo.descriptor),
+        //vks::initializers::writeDescriptorSet(descriptorSets.matrices, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, &textures.irradianceCube.descriptor),
+    };
+    vkUpdateDescriptorSets(device->logicalDevice, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);*/
+}
 void btVKDebugDrawer::preparePipeline () {
     VkPipelineInputAssemblyStateCreateInfo inputAssemblyState =
         vks::initializers::pipelineInputAssemblyStateCreateInfo(
@@ -74,7 +219,7 @@ void btVKDebugDrawer::preparePipeline () {
 
     // Pipeline layout
     VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayout, 1);
-    VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayout));
+    VK_CHECK_RESULT(vkCreatePipelineLayout(device->logicalDevice, &pipelineLayoutCreateInfo, nullptr, &pipelineLayout));
 
     VkGraphicsPipelineCreateInfo pipelineCreateInfo =
         vks::initializers::pipelineCreateInfo(
@@ -127,19 +272,58 @@ void btVKDebugDrawer::preparePipeline () {
     pipelineCreateInfo.pStages = shaderStages.data();
     pipelineCreateInfo.pVertexInputState = &vertexInputState;
 
-    VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &pipeline));
+    VK_CHECK_RESULT(vkCreateGraphicsPipelines(device->logicalDevice, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &pipeline));
 
-    vkDestroyShaderModule(device, shaderStages[0].module, nullptr);
-    vkDestroyShaderModule(device, shaderStages[1].module, nullptr);
+    vkDestroyShaderModule(device->logicalDevice, shaderStages[0].module, nullptr);
+    vkDestroyShaderModule(device->logicalDevice, shaderStages[1].module, nullptr);
 }
 
-void btVKDebugDrawer::buildCommandBuffer (VkCommandBuffer cmd){
-    if (vertexCount > 0) {
-        VkDeviceSize offsets[1] = { 0 };
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-        vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuff.buffer, offsets);
-        vkCmdDraw (cmd,  vertexCount, 1, 0, 0);
+void btVKDebugDrawer::buildCommandBuffer (){
+    if (vertexCount == 0) {
+        return;
     }
+    VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
+
+    VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
+    renderPassBeginInfo.renderPass = renderPass;
+    renderPassBeginInfo.renderArea.extent = swapChain.swapchainExtent;
+
+    for (size_t i = 0; i < cmdBuffers.size(); ++i)
+    {
+        renderPassBeginInfo.framebuffer = frameBuffers[i];
+        VK_CHECK_RESULT(vkBeginCommandBuffer(cmdBuffers[i], &cmdBufInfo));
+
+        vkCmdBeginRenderPass(cmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        VkViewport viewport = vks::initializers::viewport((float)swapChain.swapchainExtent.width,	(float)swapChain.swapchainExtent.height, 0.0f, 1.0f);
+        vkCmdSetViewport(cmdBuffers[i], 0, 1, &viewport);
+
+        VkRect2D scissor = vks::initializers::rect2D(swapChain.swapchainExtent.width, swapChain.swapchainExtent.height, 0, 0);
+        vkCmdSetScissor(cmdBuffers[i], 0, 1, &scissor);
+
+        VkDeviceSize offsets[1] = { 0 };
+
+        vkCmdBindPipeline (cmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdBindDescriptorSets(cmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &dsUboMatrices, 0, NULL);
+        vkCmdBindVertexBuffers (cmdBuffers[i], 0, 1, &vertexBuff.buffer, offsets);
+        vkCmdDraw (cmdBuffers[i],  vertexCount, 1, 0, 0);
+
+        vkCmdEndRenderPass(cmdBuffers[i]);
+
+        VK_CHECK_RESULT(vkEndCommandBuffer(cmdBuffers[i]));
+    }
+}
+
+void btVKDebugDrawer::submit (VkQueue queue, uint32_t bufferindex, VkSemaphore waitSemaphore) {
+    submitInfo.pCommandBuffers = &cmdBuffers[bufferindex];
+    submitInfo.commandBufferCount = 1;
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = &waitSemaphore;
+
+    VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, fence));
+
+    VK_CHECK_RESULT(vkWaitForFences(device->logicalDevice, 1, &fence, VK_TRUE, UINT64_MAX));
+    VK_CHECK_RESULT(vkResetFences(device->logicalDevice, 1, &fence));
 }
 void btVKDebugDrawer::clearLines(){
     vertices.clear();
@@ -264,9 +448,9 @@ VkPipelineShaderStageCreateInfo btVKDebugDrawer::loadShader(std::string fileName
     shaderStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     shaderStage.stage = stage;
 #if defined(VK_USE_PLATFORM_ANDROID_KHR)
-    shaderStage.module = vks::tools::loadShader(androidApp->activity->assetManager, fileName.c_str(), device);
+    shaderStage.module = vks::tools::loadShader(androidApp->activity->assetManager, fileName.c_str(), device->logicalDevice);
 #else
-    shaderStage.module = vks::tools::loadShader(fileName.c_str(), device);
+    shaderStage.module = vks::tools::loadShader(fileName.c_str(), device->logicalDevice);
 #endif
     shaderStage.pName = "main"; // todo : make param
     assert(shaderStage.module != VK_NULL_HANDLE);

@@ -30,20 +30,24 @@
 namespace vks
 {
     /** @brief Vulkan texture base class */
-    class Texture {
+    class Image {
     public:
-        vks::VulkanDevice *device;
-        VkImage image;
-        VkImageLayout imageLayout;
-        VkDeviceMemory deviceMemory;
-        VkImageView view;
-        uint32_t width, height;
-        uint32_t mipLevels;
-        uint32_t layerCount;
-        VkDescriptorImageInfo descriptor;
+        VkImageCreateInfo   infos = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, NULL};
+        vks::VulkanDevice*  device;
+        VkImage             image;
+        VkFormat            format;
+        uint32_t            width, height;
+        uint32_t            mipLevels;
+        uint32_t            layerCount;
 
-        /** @brief Optional sampler to use with this texture */
-        VkSampler sampler;
+        VkImageLayout       imageLayout;    //current layout??
+
+        VkDeviceMemory      deviceMemory;
+
+        VkImageView             view    = VK_NULL_HANDLE;
+        VkSampler               sampler = VK_NULL_HANDLE;
+        VkDescriptorImageInfo   descriptor;
+
 
         /** @brief Update image descriptor from current sampler, view and image layout */
         void updateDescriptor()
@@ -115,18 +119,17 @@ namespace vks
             }
 
             // Load mip map level 0 to linear tiling image
-            VkImageCreateInfo imageCreateInfo = vks::initializers::imageCreateInfo();
-            imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
-            imageCreateInfo.format = format;
-            imageCreateInfo.mipLevels = 1;
-            imageCreateInfo.arrayLayers = 1;
-            imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-            imageCreateInfo.tiling = VK_IMAGE_TILING_LINEAR;
-            imageCreateInfo.usage = imageUsageFlags;
-            imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-            imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
-            imageCreateInfo.extent = { width, height, 1 };
-            VK_CHECK_RESULT(vkCreateImage(device->logicalDevice, &imageCreateInfo, nullptr, &image));
+            infos.imageType = VK_IMAGE_TYPE_2D;
+            infos.format = format;
+            infos.mipLevels = 1;
+            infos.arrayLayers = 1;
+            infos.samples = VK_SAMPLE_COUNT_1_BIT;
+            infos.tiling = VK_IMAGE_TILING_LINEAR;
+            infos.usage = imageUsageFlags;
+            infos.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            infos.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+            infos.extent = { width, height, 1 };
+            VK_CHECK_RESULT(vkCreateImage(device->logicalDevice, &infos, nullptr, &image));
 
             VkMemoryRequirements memReqs = {};
             VkMemoryAllocateInfo memAllocInfo = vks::initializers::memoryAllocateInfo();
@@ -147,13 +150,50 @@ namespace vks
             vkUnmapMemory(device->logicalDevice, deviceMemory);
 
             stbi_image_free(img);
+        }
 
+        Image () {}
+        Image (vks::VulkanDevice* _device, VkImageType _imageType, VkFormat _format, uint32_t _width, uint32_t _height,
+               VkImageUsageFlags _usage, VkMemoryPropertyFlags memprops,
+               VkImageTiling _tiling = VK_IMAGE_TILING_OPTIMAL, VkSampleCountFlagBits _samples = VK_SAMPLE_COUNT_1_BIT) {
 
+            device = _device;
+
+            infos.imageType     = _imageType;
+            infos.format        = _format;
+            infos.extent        = { _width, _height, 1 };
+            infos.mipLevels     = 1;
+            infos.arrayLayers   = 1;
+            infos.samples       = _samples;
+            infos.tiling        = _tiling;
+            infos.usage         = _usage;
+
+            VK_CHECK_RESULT(vkCreateImage(device->logicalDevice, &infos, nullptr, &image));
+
+            VkMemoryRequirements memReqs = device->getMemoryRequirements (image);
+            VkMemoryAllocateInfo mem_alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            mem_alloc.allocationSize = memReqs.size;
+            mem_alloc.memoryTypeIndex = device->getMemoryType(memReqs.memoryTypeBits, memprops);
+            VK_CHECK_RESULT(vkAllocateMemory(device->logicalDevice, &mem_alloc, nullptr, &deviceMemory));
+            VK_CHECK_RESULT(vkBindImageMemory(device->logicalDevice, image, deviceMemory, 0));
+        }
+        void createView (VkImageViewType viewType, VkImageAspectFlags aspectFlags) {
+            if (view != VK_NULL_HANDLE)
+                vkDestroyImageView(device->logicalDevice, view, nullptr);
+
+            VkImageViewCreateInfo viewInfo = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            viewInfo.viewType = viewType;
+            viewInfo.format = infos.format;
+            viewInfo.components = {VK_COMPONENT_SWIZZLE_R,VK_COMPONENT_SWIZZLE_G,VK_COMPONENT_SWIZZLE_B,VK_COMPONENT_SWIZZLE_A};
+            viewInfo.subresourceRange = {aspectFlags,0,infos.mipLevels,0,infos.arrayLayers};
+            viewInfo.image = image;
+
+            VK_CHECK_RESULT(vkCreateImageView(device->logicalDevice, &viewInfo, nullptr, &view));
         }
     };
 
     /** @brief 2D texture */
-    class Texture2D : public Texture {
+    class Texture2D : public Image {
     public:
         /**
         * Load a 2D texture including all mip levels
@@ -635,7 +675,7 @@ namespace vks
     };
 
     /** @brief 2D array texture */
-    class Texture2DArray : public Texture {
+    class Texture2DArray : public Image {
     public:
         void buildFromImages(const std::vector<std::string>& mapDic, uint32_t textureSize,
                              VkFormat _format,
@@ -676,7 +716,7 @@ namespace vks
             VK_CHECK_RESULT(vkBindImageMemory(device->logicalDevice, image, deviceMemory, 0));
 
             for (int l = 0; l < mapDic.size(); l++) {
-                Texture inTex;
+                Image inTex;
                 inTex.loadStbLinearNoSampling(mapDic[l].c_str(), device, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, false);
 
                 VkCommandBuffer blitFirstMipCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
@@ -1062,7 +1102,7 @@ namespace vks
     };
 
     /** @brief Cube map texture */
-    class TextureCubeMap : public Texture {
+    class TextureCubeMap : public Image {
     public:
         /**
         * Load a cubemap texture including all mip levels from a single file

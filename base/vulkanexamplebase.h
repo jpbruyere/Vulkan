@@ -50,6 +50,7 @@
 #include "VulkanInitializers.hpp"
 #include "VulkanDevice.hpp"
 #include "VulkanSwapChain.hpp"
+#include "VulkanTexture.hpp"
 #include "camera.hpp"
 #include "benchmark.hpp"
 
@@ -66,11 +67,11 @@ private:
     uint32_t destWidth;
     uint32_t destHeight;
     bool resizing = false;
-    vks::UIOverlay *UIOverlay = nullptr;
     // Called if the window is resized and some resources have to be recreatesd
     void windowResize();
     void handleMouseMove(int32_t x, int32_t y);
 protected:
+    vks::UIOverlay *UIOverlay = nullptr;
     // Frame counter to display fps
     uint32_t frameCounter = 0;
     uint32_t lastFPS = 0;
@@ -187,12 +188,14 @@ public:
     std::string title = "Vulkan Example";
     std::string name = "vulkanExample";
 
-    struct
+    /*struct
     {
         VkImage image;
         VkDeviceMemory mem;
         VkImageView view;
-    } depthStencil;
+    } depthStencil;*/
+
+    vks::Image* depthStencil;
 
     struct {
         glm::vec2 axisLeft = glm::vec2(0.0f);
@@ -399,7 +402,7 @@ public:
     void prepareFrame();
 
     // Submit the frames' workload
-    void submitFrame();
+    virtual void submitFrame();
 
     /** @brief (Virtual) Called before the UI overlay is created, can be used to do a custom setup e.g. with different renderpass */
     virtual void OnSetupUIOverlay(vks::UIOverlayCreateInfo &createInfo);

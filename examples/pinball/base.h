@@ -135,7 +135,6 @@ public:
     void setupDescriptors();
 
     virtual void preparePipelines();
-    virtual void additionalDrawCommands (VkCommandBuffer cmd) {}
     void generateBRDFLUT();
     void generateIrradianceCube();
     void generatePrefilteredCube();
@@ -144,7 +143,6 @@ public:
     void updateParams();
     void draw();
     void setupMultisampleTarget();
-    void setupRenderPass();
     void setupFrameBuffer();
     void prepare();
     virtual void render();
