@@ -23,6 +23,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <fstream>
+#include <sstream>
 #if defined(_WIN32)
 #include <windows.h>
 #include <fcntl.h>
@@ -134,5 +135,17 @@ namespace vks
 
         VkRenderPass createRenderPass (VkDevice device , VkFormat colorFormat, VkFormat depthFormat, VkAttachmentLoadOp att0LoadOp);
         VkRenderPass createRenderPass (VkDevice device, VkFormat colorFormat, VkFormat depthFormat, VkAttachmentLoadOp att0LoadOp, VkSampleCountFlagBits sampleCount);
+
+        // AngelCode .fnt format structs and classes
+        struct bmchar {
+            uint32_t x, y;
+            uint32_t width;
+            uint32_t height;
+            int32_t xoffset;
+            int32_t yoffset;
+            int32_t xadvance;
+            uint32_t page;
+        };
+        std::array<bmchar, 255> parsebmFont(const std::string &fileName);
     }
 }

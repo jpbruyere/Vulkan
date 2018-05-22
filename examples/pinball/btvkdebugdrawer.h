@@ -17,7 +17,7 @@ class btVKDebugDrawer : public btIDebugDraw
     VulkanSwapChain             swapChain;
     VkRenderPass                renderPass;
     std::vector<VkFramebuffer>  frameBuffers;
-    VkDescriptorSet             dsUboMatrices;
+    vks::Buffer*                uboMatrices;
 
     VkCommandPool               commandPool;
     std::vector<VkCommandBuffer>cmdBuffers;
@@ -30,6 +30,7 @@ class btVKDebugDrawer : public btIDebugDraw
     VkSubmitInfo            submitInfo;
 
     VkPipeline              pipeline;
+    VkPipeline              pipelineSDFF;
     VkPipelineLayout        pipelineLayout;
     VkPipelineCache         pipelineCache;
 
@@ -37,30 +38,34 @@ class btVKDebugDrawer : public btIDebugDraw
     vks::Image*         imgDepth;
 
     std::vector<float>	vertices;
+    std::vector<float>  sdffVertices;
     vks::Buffer			vertexBuff;
     uint32_t			vBufferSize = 10000 * sizeof(float) * 6;
 
-
-    vks::VertexLayout vertexLayout = vks::VertexLayout({
-        vks::VERTEX_COMPONENT_POSITION,
-        vks::VERTEX_COMPONENT_COLOR,
-    });
 
     void prepareRenderPass();
     void prepareDescriptors();
     void preparePipeline();
 
+    void sdffAddVertex (float posX, float posY, float posZ, float uvT, float uvU);
+    void generateText(const char *text, btVector3 pos);
     const std::string getAssetPath();
     VkPipelineShaderStageCreateInfo loadShader(std::string fileName, VkShaderStageFlagBits stage);
 
 public:
-    VkSemaphore             drawComplete;
+    std::array<vks::tools::bmchar,255>  fontChars;
+    vks::Texture2D      texSDFFont;
+
+    VkSemaphore         drawComplete;
     uint32_t			vertexCount = 0;
+    uint32_t			sdffVertexCount = 0;
 
     void buildCommandBuffer ();
     void submit (VkQueue queue, uint32_t bufferindex, VkSemaphore waitSemaphore);
 
-    btVKDebugDrawer(vks::VulkanDevice* _device, VulkanSwapChain _swapChain, vks::Image* _depthImg, VkSampleCountFlagBits _sampleCount, std::vector<VkFramebuffer> &_frameBuffers, VkDescriptorSet _dsUboMatrices);
+    btVKDebugDrawer(vks::VulkanDevice* _device, VulkanSwapChain _swapChain, vks::Image* _depthImg,
+                    VkSampleCountFlagBits _sampleCount, std::vector<VkFramebuffer> &_frameBuffers,
+                    vks::Buffer *_uboMatrices, std::string fontFnt, vks::Texture2D fontTexture);
     virtual ~btVKDebugDrawer();
 
     virtual void drawLine(const btVector3& from,const btVector3& to,const btVector3& fromColor, const btVector3& toColor);

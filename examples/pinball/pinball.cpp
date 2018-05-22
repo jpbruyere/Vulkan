@@ -50,7 +50,7 @@
 //target id range from TARG_BDY_ID + targetGroups.size, target index is in userIndex2 of body instance
 #define TARG_BDY_ID 50
 
-#define BT_DEBUG_DRAW 0
+#define BT_DEBUG_DRAW 1
 
 constexpr unsigned int str2int(const char* str, int h = 0)
 {
@@ -811,18 +811,22 @@ public:
     void preparePipelines() {
         VulkanExampleVk::preparePipelines();
 
-        debugDrawer = new btVKDebugDrawer (vulkanDevice, swapChain, depthStencil, sampleCount, frameBuffers, descriptorSets.matrices);
+        vks::Texture2D fontTexture;
+        fontTexture.loadFromFile (getAssetPath() + "textures/font_sdf_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
+        debugDrawer = new btVKDebugDrawer (vulkanDevice, swapChain, depthStencil, sampleCount,
+                                           frameBuffers, &uniformBuffers.matrices,
+                                           getAssetPath() + "font.fnt", fontTexture);
+
         debugDrawer->setDebugMode(
                     btIDebugDraw::DBG_DrawConstraintLimits|
                     btIDebugDraw::DBG_DrawFrames|
                     btIDebugDraw::DBG_DrawContactPoints|
-                    btIDebugDraw::DBG_DrawConstraints
+                    btIDebugDraw::DBG_DrawConstraints |
+                    btIDebugDraw::DBG_DrawText
                     //btIDebugDraw::DBG_DrawWireframe
                     );
 
         dynamicsWorld->setDebugDrawer (debugDrawer);
-
-
     }
 #endif
 
@@ -833,6 +837,8 @@ public:
         step_physics();
 #if BT_DEBUG_DRAW
         dynamicsWorld->debugDrawWorld();
+        debugDrawer->draw3dText(btVector3(0,0.2,0), "Abcdjip\0");
+        debugDrawer->flushLines();
         if (debugDrawer->vertexCount>0)
             debugDrawer->buildCommandBuffer ();
 #endif

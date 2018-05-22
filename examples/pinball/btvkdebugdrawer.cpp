@@ -2,7 +2,7 @@
 
 const VkPipelineStageFlags stageFlags = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 btVKDebugDrawer::btVKDebugDrawer(vks::VulkanDevice* _device, VulkanSwapChain _swapChain, vks::Image *_depthImg, VkSampleCountFlagBits _sampleCount,
-                                 std::vector<VkFramebuffer>&_frameBuffers, VkDescriptorSet _dsUboMatrices)
+                                 std::vector<VkFramebuffer>&_frameBuffers, vks::Buffer* _uboMatrices, std::string fontFnt, vks::Texture2D fontTexture)
 :m_debugMode(0)
 {
     swapChain   = _swapChain;
@@ -10,7 +10,7 @@ btVKDebugDrawer::btVKDebugDrawer(vks::VulkanDevice* _device, VulkanSwapChain _sw
     imgDepth    = _depthImg;
     sampleCount = _sampleCount;
     frameBuffers= _frameBuffers;
-    dsUboMatrices= _dsUboMatrices;
+    uboMatrices = _uboMatrices;
 
     prepareRenderPass();
 
@@ -42,6 +42,8 @@ btVKDebugDrawer::btVKDebugDrawer(vks::VulkanDevice* _device, VulkanSwapChain _sw
     VkFenceCreateInfo fenceCreateInfo = vks::initializers::fenceCreateInfo();
     VK_CHECK_RESULT(vkCreateFence(device->logicalDevice, &fenceCreateInfo, nullptr, &fence));
 
+    fontChars = vks::tools::parsebmFont(fontFnt);
+    texSDFFont = fontTexture;
 
     prepareDescriptors();
     preparePipeline ();
@@ -84,7 +86,7 @@ void btVKDebugDrawer::prepareRenderPass()
     // Depth attachment
     attachments[1].format = imgDepth->infos.format;
     attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
-    attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -148,7 +150,7 @@ void btVKDebugDrawer::prepareDescriptors()
     // Descriptor pool
     std::vector<VkDescriptorPoolSize> poolSizes = {
         vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1),
-        //vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1)
+        vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1)
     };
 
     VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 2);
@@ -157,22 +159,21 @@ void btVKDebugDrawer::prepareDescriptors()
     // Descriptor set layout
     std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings = {
         vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0),
-        //vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1),
+        vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1),
     };
 
     VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
     VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device->logicalDevice, &descriptorLayout, nullptr, &descriptorSetLayout));
 
     // Descriptor set
-    /*VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayout, 1);
+    VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayout, 1);
     VK_CHECK_RESULT(vkAllocateDescriptorSets(device->logicalDevice, &allocInfo, &descriptorSet));
 
-    VK_CHECK_RESULT(vkAllocateDescriptorSets(device->logicalDevice, &allocInfo, &descriptorSets.matrices));
     std::vector<VkWriteDescriptorSet> writeDescriptorSets = {
-        vks::initializers::writeDescriptorSet(descriptorSets.matrices, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &ubo.descriptor),
-        //vks::initializers::writeDescriptorSet(descriptorSets.matrices, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, &textures.irradianceCube.descriptor),
+        vks::initializers::writeDescriptorSet(descriptorSet, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uboMatrices->descriptor),
+        vks::initializers::writeDescriptorSet(descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, &texSDFFont.descriptor),
     };
-    vkUpdateDescriptorSets(device->logicalDevice, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);*/
+    vkUpdateDescriptorSets(device->logicalDevice, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 }
 void btVKDebugDrawer::preparePipeline () {
     VkPipelineInputAssemblyStateCreateInfo inputAssemblyState =
@@ -185,13 +186,22 @@ void btVKDebugDrawer::preparePipeline () {
         vks::initializers::pipelineRasterizationStateCreateInfo(
             VK_POLYGON_MODE_FILL,
             VK_CULL_MODE_NONE,
-            VK_FRONT_FACE_CLOCKWISE,
+            VK_FRONT_FACE_COUNTER_CLOCKWISE,
             0);
 
     VkPipelineColorBlendAttachmentState blendAttachmentState =
         vks::initializers::pipelineColorBlendAttachmentState(
             0xf,
-            VK_FALSE);
+            VK_TRUE);
+
+    blendAttachmentState.blendEnable = VK_TRUE;
+    blendAttachmentState.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAttachmentState.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAttachmentState.colorBlendOp = VK_BLEND_OP_ADD;
+    blendAttachmentState.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAttachmentState.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    blendAttachmentState.alphaBlendOp = VK_BLEND_OP_ADD;
+    blendAttachmentState.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
     VkPipelineColorBlendStateCreateInfo colorBlendState =
         vks::initializers::pipelineColorBlendStateCreateInfo(
@@ -242,20 +252,19 @@ void btVKDebugDrawer::preparePipeline () {
     // Vertex bindings an attributes
     // Binding description
     std::vector<VkVertexInputBindingDescription> vertexInputBindings = {
-        vks::initializers::vertexInputBindingDescription(0, vertexLayout.stride(), VK_VERTEX_INPUT_RATE_VERTEX),
+        {0, 6 * sizeof(float), VK_VERTEX_INPUT_RATE_VERTEX},
     };
 
     // Attribute descriptions
     std::vector<VkVertexInputAttributeDescription> vertexInputAttributes = {
-        vks::initializers::vertexInputAttributeDescription(0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0),					// Position
-        vks::initializers::vertexInputAttributeDescription(0, 1, VK_FORMAT_R32G32B32_SFLOAT, sizeof(float) * 3),	// color
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},					// Position
+        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(float) * 3},	// color
     };
 
-    VkPipelineVertexInputStateCreateInfo vertexInputState = vks::initializers::pipelineVertexInputStateCreateInfo();
-    vertexInputState.vertexBindingDescriptionCount = static_cast<uint32_t>(vertexInputBindings.size());
-    vertexInputState.pVertexBindingDescriptions = vertexInputBindings.data();
-    vertexInputState.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexInputAttributes.size());
-    vertexInputState.pVertexAttributeDescriptions = vertexInputAttributes.data();
+    VkPipelineVertexInputStateCreateInfo vertexInputState =
+            vks::initializers::pipelineVertexInputStateCreateInfo(
+                static_cast<uint32_t>(vertexInputBindings.size()), vertexInputBindings.data(),
+                static_cast<uint32_t>(vertexInputAttributes.size()), vertexInputAttributes.data());
 
     std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages;
     shaderStages[0] = loadShader(getAssetPath() +  "shaders/pinball/debugDraw.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
@@ -273,6 +282,27 @@ void btVKDebugDrawer::preparePipeline () {
     pipelineCreateInfo.pVertexInputState = &vertexInputState;
 
     VK_CHECK_RESULT(vkCreateGraphicsPipelines(device->logicalDevice, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &pipeline));
+
+    vkDestroyShaderModule(device->logicalDevice, shaderStages[0].module, nullptr);
+    vkDestroyShaderModule(device->logicalDevice, shaderStages[1].module, nullptr);
+
+    //SDFF pipeline
+
+    inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    vertexInputBindings = {
+        {0, 5 * sizeof(float), VK_VERTEX_INPUT_RATE_VERTEX}
+    };
+
+    vertexInputAttributes = {
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},					// Position
+        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(float) * 3},	// color
+    };
+
+    shaderStages[0] = loadShader(getAssetPath() +  "shaders/pinball/sdf.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+    shaderStages[1] = loadShader(getAssetPath() +  "shaders/pinball/sdf.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+
+
+    VK_CHECK_RESULT(vkCreateGraphicsPipelines(device->logicalDevice, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &pipelineSDFF));
 
     vkDestroyShaderModule(device->logicalDevice, shaderStages[0].module, nullptr);
     vkDestroyShaderModule(device->logicalDevice, shaderStages[1].module, nullptr);
@@ -304,9 +334,14 @@ void btVKDebugDrawer::buildCommandBuffer (){
         VkDeviceSize offsets[1] = { 0 };
 
         vkCmdBindPipeline (cmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-        vkCmdBindDescriptorSets(cmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &dsUboMatrices, 0, NULL);
+        vkCmdBindDescriptorSets(cmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, NULL);
         vkCmdBindVertexBuffers (cmdBuffers[i], 0, 1, &vertexBuff.buffer, offsets);
         vkCmdDraw (cmdBuffers[i],  vertexCount, 1, 0, 0);
+
+        vkCmdBindPipeline (cmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineSDFF);
+        offsets[0] = vertices.size() * sizeof(float);
+        vkCmdBindVertexBuffers (cmdBuffers[i], 0, 1, &vertexBuff.buffer, offsets);
+        vkCmdDraw (cmdBuffers[i],  sdffVertexCount, 1, 0, 0);
 
         vkCmdEndRenderPass(cmdBuffers[i]);
 
@@ -326,6 +361,8 @@ void btVKDebugDrawer::submit (VkQueue queue, uint32_t bufferindex, VkSemaphore w
     VK_CHECK_RESULT(vkResetFences(device->logicalDevice, 1, &fence));
 }
 void btVKDebugDrawer::clearLines(){
+    sdffVertices.clear();
+    sdffVertexCount = 0;
     vertices.clear();
     vertexCount = 0;
 }
@@ -333,6 +370,8 @@ void btVKDebugDrawer::clearLines(){
 void btVKDebugDrawer::flushLines(){
     memcpy(vertexBuff.mapped, vertices.data(), vertices.size() * sizeof(float));
     vertexCount = vertices.size() / 6;
+    memcpy(vertexBuff.mapped + vertices.size() * sizeof(float), sdffVertices.data(), sdffVertices.size() * sizeof(float));
+    sdffVertexCount = sdffVertices.size() / 5;
 }
 
 void btVKDebugDrawer::drawLine(const btVector3& from,const btVector3& to,const btVector3& fromColor, const btVector3& toColor)
@@ -413,10 +452,13 @@ void btVKDebugDrawer::setDebugMode(int debugMode)
 
 }
 
-void btVKDebugDrawer::draw3dText(const btVector3& location,const char* textString)
+void btVKDebugDrawer::draw3dText(const btVector3& location, const char* textString)
 {
+    generateText(textString, location);
+
     //glRasterPos3f(location.x(),  location.y(),  location.z());
     //BMF_DrawString(BMF_GetFont(BMF_kHelvetica10),textString);
+
 }
 
 void btVKDebugDrawer::reportErrorWarning(const char* warningString)
@@ -429,6 +471,60 @@ void btVKDebugDrawer::drawContactPoint(const btVector3& pointOnB,const btVector3
     drawLine(pointOnB,pointOnB+normalOnB*0.1,color);
 }
 
+void btVKDebugDrawer::sdffAddVertex (float posX,float posY,float posZ, float uvT, float uvU) {
+    sdffVertices.push_back(-posX);
+    sdffVertices.push_back(-posY);
+    sdffVertices.push_back(-posZ);
+
+    sdffVertices.push_back(uvT);
+    sdffVertices.push_back(uvU);
+}
+// Creates a vertex buffer containing quads for the passed text
+void btVKDebugDrawer::generateText(const char* text, btVector3 pos)
+{
+    float w = texSDFFont.infos.extent.width;
+    float cw = 36.0f;
+    float scale = 0.1f;
+
+    uint32_t i = 0;
+    while (text[i] != '\0') {
+
+        vks::tools::bmchar *charInfo = &fontChars[(int)text[i]];
+
+        if (charInfo->width == 0)
+            charInfo->width = cw;
+
+        float charw = ((float)(charInfo->width) / cw);
+        float dimx = scale * charw;
+        float charh = ((float)(charInfo->height) / cw);
+        float dimy = scale * charh;
+        float y = pos.getY() - (charh + (float)(charInfo->yoffset) / cw) * scale;// - charh;// * scale;
+
+        float us = charInfo->x / w;
+        float ue = (charInfo->x + charInfo->width) / w;
+        float ts = (charInfo->y + charInfo->height) / w;
+        float te = charInfo->y / w;
+
+        float xo = charInfo->xoffset / cw;
+
+        /*vertices.push_back({ { posx + dimx + xo,  posy + dimy, 0.0f }, { ue, te } });
+        vertices.push_back({ { posx + xo,         posy + dimy, 0.0f }, { us, te } });
+        vertices.push_back({ { posx + xo,         posy,        0.0f }, { us, ts } });
+        vertices.push_back({ { posx + dimx + xo,  posy,        0.0f }, { ue, ts } });
+        */
+        //{ 0,1,2, 2,3,0 };
+        sdffAddVertex (pos.getX() + dimx + xo,  y + dimy, pos.getZ(), ue, te);
+        sdffAddVertex (pos.getX() + xo,         y + dimy, pos.getZ(), us, te);
+        sdffAddVertex (pos.getX() + xo,         y,        pos.getZ(), us, ts);
+        sdffAddVertex (pos.getX() + xo,         y,        pos.getZ(), us, ts);
+        sdffAddVertex (pos.getX() + dimx + xo,  y,        pos.getZ(), ue, ts);
+        sdffAddVertex (pos.getX() + dimx + xo,  y + dimy, pos.getZ(), ue, te);
+
+        float advance = ((float)(charInfo->xadvance) / cw) * scale;
+        pos.setX(pos.getX() + advance);
+        i++;
+    }
+}
 #if !(defined(VK_USE_PLATFORM_IOS_MVK) || defined(VK_USE_PLATFORM_MACOS_MVK))
 const std::string btVKDebugDrawer::getAssetPath()
 {

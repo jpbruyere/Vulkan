@@ -390,6 +390,19 @@ namespace vks
             pipelineVertexInputStateCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
             return pipelineVertexInputStateCreateInfo;
         }
+        inline VkPipelineVertexInputStateCreateInfo pipelineVertexInputStateCreateInfo(
+                            uint32_t vertexBindingDescriptionCount,
+                            const VkVertexInputBindingDescription* pVertexBindingDescriptions,
+                            uint32_t vertexAttributeDescriptionCount,
+                            const VkVertexInputAttributeDescription* pVertexAttributeDescriptions)
+        {
+            VkPipelineVertexInputStateCreateInfo pipelineVertexInputStateCreateInfo {
+                        VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO, NULL, 0,
+                        vertexBindingDescriptionCount, pVertexBindingDescriptions,
+                        vertexAttributeDescriptionCount, pVertexAttributeDescriptions
+            };
+            return pipelineVertexInputStateCreateInfo;
+        }
 
         inline VkPipelineInputAssemblyStateCreateInfo pipelineInputAssemblyStateCreateInfo(
             VkPrimitiveTopology topology,

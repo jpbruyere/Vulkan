@@ -18,30 +18,7 @@ double diffclock( clock_t clock1, clock_t clock2 ) {
     return diffms;
 }
 
-// AngelCode .fnt format structs and classes
-struct bmchar {
-    uint32_t x, y;
-    uint32_t width;
-    uint32_t height;
-    int32_t xoffset;
-    int32_t yoffset;
-    int32_t xadvance;
-    uint32_t page;
-};
 
-// Quick and dirty : complete ASCII table
-// Only chars present in the .fnt are filled with data!
-std::array<bmchar, 255> fontChars;
-
-int32_t nextValuePair(std::stringstream *stream)
-{
-    std::string pair;
-    *stream >> pair;
-    uint32_t spos = pair.find("=");
-    std::string value = pair.substr(spos + 1);
-    int32_t val = std::stoi(value);
-    return val;
-}
 
 VulkanExampleVk::VulkanExampleVk(bool enableValidation) : VulkanExampleBase(enableValidation)
 {
@@ -166,120 +143,9 @@ void VulkanExampleVk::buildCommandBuffers()
     }
 }
 
-// Basic parser fpr AngelCode bitmap font format files
-// See http://www.angelcode.com/products/bmfont/doc/file_format.html for details
-void VulkanExampleVk::parsebmFont()
-{
-    std::string fileName = getAssetPath() + "lcd.fnt";
 
-#if defined(__ANDROID__)
-    // Font description file is stored inside the apk
-    // So we need to load it using the asset manager
-    AAsset* asset = AAssetManager_open(androidApp->activity->assetManager, fileName.c_str(), AASSET_MODE_STREAMING);
-    assert(asset);
-    size_t size = AAsset_getLength(asset);
 
-    assert(size > 0);
 
-    void *fileData = malloc(size);
-    AAsset_read(asset, fileData, size);
-    AAsset_close(asset);
-
-    std::stringbuf sbuf((const char*)fileData);
-    std::istream istream(&sbuf);
-#else
-    std::filebuf fileBuffer;
-    fileBuffer.open(fileName, std::ios::in);
-    std::istream istream(&fileBuffer);
-#endif
-
-    assert(istream.good());
-
-    while (!istream.eof())
-    {
-        std::string line;
-        std::stringstream lineStream;
-        std::getline(istream, line);
-        lineStream << line;
-
-        std::string info;
-        lineStream >> info;
-
-        if (info == "char")
-        {
-            // char id
-            uint32_t charid = nextValuePair(&lineStream);
-            // Char properties
-            fontChars[charid].x = nextValuePair(&lineStream);
-            fontChars[charid].y = nextValuePair(&lineStream);
-            fontChars[charid].width = nextValuePair(&lineStream);
-            fontChars[charid].height = nextValuePair(&lineStream);
-            fontChars[charid].xoffset = nextValuePair(&lineStream);
-            fontChars[charid].yoffset = nextValuePair(&lineStream);
-            fontChars[charid].xadvance = nextValuePair(&lineStream);
-            fontChars[charid].page = nextValuePair(&lineStream);
-        }
-    }
-
-}
-
-// Creates a vertex buffer containing quads for the passed text
-/*void generateText(std:: string text)
-{
-    std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
-    uint32_t indexOffset = 0;
-
-    float w = textures.fontSDF.width;
-
-    float posx = 0.0f;
-    float posy = 0.0f;
-
-    for (uint32_t i = 0; i < text.size(); i++)
-    {
-        bmchar *charInfo = &fontChars[(int)text[i]];
-
-        if (charInfo->width == 0)
-            charInfo->width = 36;
-
-        float charw = ((float)(charInfo->width) / 36.0f);
-        float dimx = 1.0f * charw;
-        float charh = ((float)(charInfo->height) / 36.0f);
-        float dimy = 1.0f * charh;
-        posy = 1.0f - charh;
-
-        float us = charInfo->x / w;
-        float ue = (charInfo->x + charInfo->width) / w;
-        float ts = charInfo->y / w;
-        float te = (charInfo->y + charInfo->height) / w;
-
-        float xo = charInfo->xoffset / 36.0f;
-        float yo = charInfo->yoffset / 36.0f;
-
-        vertices.push_back({ { posx + dimx + xo,  posy + dimy, 0.0f }, { ue, te } });
-        vertices.push_back({ { posx + xo,         posy + dimy, 0.0f }, { us, te } });
-        vertices.push_back({ { posx + xo,         posy,        0.0f }, { us, ts } });
-        vertices.push_back({ { posx + dimx + xo,  posy,        0.0f }, { ue, ts } });
-
-        std::array<uint32_t, 6> letterIndices = { 0,1,2, 2,3,0 };
-        for (auto& index : letterIndices)
-        {
-            indices.push_back(indexOffset + index);
-        }
-        indexOffset += 4;
-
-        float advance = ((float)(charInfo->xadvance) / 36.0f);
-        posx += advance;
-    }
-    indexCount = indices.size();
-
-    // Center
-    for (auto& v : vertices)
-    {
-        v.pos[0] -= posx / 2.0f;
-        v.pos[1] -= 0.5f;
-    }
-}*/
 void VulkanExampleVk::loadAssets()
 {
     skybox.loadFromFile(getAssetPath() + "models/cube.obj", vertexLayout, 1.0f, vulkanDevice, queue);

@@ -35,10 +35,6 @@ namespace vks
         VkImageCreateInfo   infos = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, NULL};
         vks::VulkanDevice*  device;
         VkImage             image;
-        VkFormat            format;
-        uint32_t            width, height;
-        uint32_t            mipLevels;
-        uint32_t            layerCount;
 
         VkImageLayout       imageLayout;    //current layout??
 
@@ -95,11 +91,11 @@ namespace vks
                 vks::tools::exitFatal("Could not load texture from " + filename + ", error: " + std::string(stbi_failure_reason()), 0);
 
 
-            width = static_cast<uint32_t>(w);
-            height = static_cast<uint32_t>(h);
-            mipLevels = 1;
+            infos.extent.width = static_cast<uint32_t>(w);
+            infos.extent.height = static_cast<uint32_t>(h);
+            infos.mipLevels = 1;
             channels = 4;
-            uint32_t imgSize = width * height * channels;
+            uint32_t imgSize = infos.extent.width * infos.extent.height * channels;
 
             VkFormat format;
 
@@ -128,7 +124,7 @@ namespace vks
             infos.usage = imageUsageFlags;
             infos.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             infos.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
-            infos.extent = { width, height, 1 };
+            infos.extent = { infos.extent.width, infos.extent.height, 1 };
             VK_CHECK_RESULT(vkCreateImage(device->logicalDevice, &infos, nullptr, &image));
 
             VkMemoryRequirements memReqs = {};
@@ -242,9 +238,9 @@ namespace vks
             assert(!tex2D.empty());
 
             this->device = device;
-            width = static_cast<uint32_t>(tex2D[0].extent().x);
-            height = static_cast<uint32_t>(tex2D[0].extent().y);
-            mipLevels = static_cast<uint32_t>(tex2D.levels());
+            infos.extent = {static_cast<uint32_t>(tex2D[0].extent().x),
+                            static_cast<uint32_t>(tex2D[0].extent().y),1};
+            infos.mipLevels = static_cast<uint32_t>(tex2D.levels());
 
             // Get device properites for the requested texture format
             VkFormatProperties formatProperties;
@@ -297,7 +293,7 @@ namespace vks
                 std::vector<VkBufferImageCopy> bufferCopyRegions;
                 uint32_t offset = 0;
 
-                for (uint32_t i = 0; i < mipLevels; i++)
+                for (uint32_t i = 0; i < infos.mipLevels; i++)
                 {
                     VkBufferImageCopy bufferCopyRegion = {};
                     bufferCopyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -315,23 +311,22 @@ namespace vks
                 }
 
                 // Create optimal tiled target image
-                VkImageCreateInfo imageCreateInfo = vks::initializers::imageCreateInfo();
-                imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
-                imageCreateInfo.format = format;
-                imageCreateInfo.mipLevels = mipLevels;
-                imageCreateInfo.arrayLayers = 1;
-                imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-                imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-                imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-                imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                imageCreateInfo.extent = { width, height, 1 };
-                imageCreateInfo.usage = imageUsageFlags;
+
+                infos.imageType = VK_IMAGE_TYPE_2D;
+                infos.format = format;
+                //infos.mipLevels = infos.mipLevels;
+                infos.arrayLayers = 1;
+                infos.samples = VK_SAMPLE_COUNT_1_BIT;
+                infos.tiling = VK_IMAGE_TILING_OPTIMAL;
+                infos.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+                infos.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                infos.usage = imageUsageFlags;
                 // Ensure that the TRANSFER_DST bit is set for staging
-                if (!(imageCreateInfo.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
+                if (!(infos.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
                 {
-                    imageCreateInfo.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+                    infos.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
                 }
-                VK_CHECK_RESULT(vkCreateImage(device->logicalDevice, &imageCreateInfo, nullptr, &image));
+                VK_CHECK_RESULT(vkCreateImage(device->logicalDevice, &infos, nullptr, &image));
 
                 vkGetImageMemoryRequirements(device->logicalDevice, image, &memReqs);
 
@@ -344,7 +339,7 @@ namespace vks
                 VkImageSubresourceRange subresourceRange = {};
                 subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
                 subresourceRange.baseMipLevel = 0;
-                subresourceRange.levelCount = mipLevels;
+                subresourceRange.levelCount = infos.mipLevels;
                 subresourceRange.layerCount = 1;
 
                 // Image barrier for optimal image (target)
@@ -396,7 +391,7 @@ namespace vks
                 VkImageCreateInfo imageCreateInfo = vks::initializers::imageCreateInfo();
                 imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
                 imageCreateInfo.format = format;
-                imageCreateInfo.extent = { width, height, 1 };
+                imageCreateInfo.extent = { infos.extent.width, infos.extent.height, 1 };
                 imageCreateInfo.mipLevels = 1;
                 imageCreateInfo.arrayLayers = 1;
                 imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -469,7 +464,7 @@ namespace vks
             samplerCreateInfo.compareOp = VK_COMPARE_OP_NEVER;
             samplerCreateInfo.minLod = 0.0f;
             // Max level-of-detail should match mip level count
-            samplerCreateInfo.maxLod = (useStaging) ? (float)mipLevels : 0.0f;
+            samplerCreateInfo.maxLod = (useStaging) ? (float)infos.mipLevels : 0.0f;
             // Only enable anisotropic filtering if enabled on the devicec
             samplerCreateInfo.maxAnisotropy = device->enabledFeatures.samplerAnisotropy ? device->properties.limits.maxSamplerAnisotropy : 1.0f;
             samplerCreateInfo.anisotropyEnable = device->enabledFeatures.samplerAnisotropy;
@@ -488,7 +483,7 @@ namespace vks
             viewCreateInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
             // Linear tiling usually won't support mip maps
             // Only set mip map count if optimal tiling is used
-            viewCreateInfo.subresourceRange.levelCount = (useStaging) ? mipLevels : 1;
+            viewCreateInfo.subresourceRange.levelCount = (useStaging) ? infos.mipLevels : 1;
             viewCreateInfo.image = image;
             VK_CHECK_RESULT(vkCreateImageView(device->logicalDevice, &viewCreateInfo, nullptr, &view));
 
@@ -525,9 +520,8 @@ namespace vks
             assert(buffer);
 
             this->device = device;
-            width = width;
-            height = height;
-            mipLevels = 1;
+            infos.extent ={width,height,1};
+            infos.mipLevels = 1;
 
             VkMemoryAllocateInfo memAllocInfo = vks::initializers::memoryAllocateInfo();
             VkMemoryRequirements memReqs;
@@ -577,7 +571,7 @@ namespace vks
             VkImageCreateInfo imageCreateInfo = vks::initializers::imageCreateInfo();
             imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
             imageCreateInfo.format = format;
-            imageCreateInfo.mipLevels = mipLevels;
+            imageCreateInfo.mipLevels = infos.mipLevels;
             imageCreateInfo.arrayLayers = 1;
             imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
             imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -603,7 +597,7 @@ namespace vks
             VkImageSubresourceRange subresourceRange = {};
             subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             subresourceRange.baseMipLevel = 0;
-            subresourceRange.levelCount = mipLevels;
+            subresourceRange.levelCount = infos.mipLevels;
             subresourceRange.layerCount = 1;
 
             // Image barrier for optimal image (target)
@@ -689,21 +683,21 @@ namespace vks
             //build texture array, all texture are resized at a fixed size while added into a layer of the array tex,
             //than mipmaps are genereted
             imageLayout = _imageLayout;
-            layerCount = mapDic.size();
-            width = height = textureSize;
-            mipLevels = floor(log2(std::max(width, height))) + 1;
+            infos.arrayLayers = mapDic.size();
+            infos.extent.width = infos.extent.height = textureSize;
+            infos.mipLevels = floor(log2(std::max(infos.extent.width, infos.extent.height))) + 1;
             device = _device;
 
             VkImageCreateInfo imageCreateInfo = vks::initializers::imageCreateInfo();
             imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
             imageCreateInfo.format = _format;
-            imageCreateInfo.mipLevels = mipLevels;
-            imageCreateInfo.arrayLayers = layerCount;
+            imageCreateInfo.mipLevels = infos.mipLevels;
+            imageCreateInfo.arrayLayers = infos.arrayLayers;
             imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
             imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
             imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            imageCreateInfo.extent = { width, height, 1 };
+            imageCreateInfo.extent = { infos.extent.width, infos.extent.height, 1 };
             imageCreateInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | _imageUsageFlags;
             VK_CHECK_RESULT(vkCreateImage(device->logicalDevice, &imageCreateInfo, nullptr, &image));
 
@@ -727,8 +721,8 @@ namespace vks
                 firstMipBlit.srcSubresource.layerCount = 1;
                 firstMipBlit.srcSubresource.mipLevel = 0;
                 firstMipBlit.srcSubresource.baseArrayLayer = 0;
-                firstMipBlit.srcOffsets[1].x = inTex.width;
-                firstMipBlit.srcOffsets[1].y = inTex.height;
+                firstMipBlit.srcOffsets[1].x = inTex.infos.extent.width;
+                firstMipBlit.srcOffsets[1].y = inTex.infos.extent.height;
                 firstMipBlit.srcOffsets[1].z = 1;
 
                 // Destination
@@ -736,8 +730,8 @@ namespace vks
                 firstMipBlit.dstSubresource.layerCount = 1;
                 firstMipBlit.dstSubresource.mipLevel = 0;
                 firstMipBlit.dstSubresource.baseArrayLayer = l;
-                firstMipBlit.dstOffsets[1].x = width;
-                firstMipBlit.dstOffsets[1].y = height;
+                firstMipBlit.dstOffsets[1].x = infos.extent.width;
+                firstMipBlit.dstOffsets[1].y = infos.extent.height;
                 firstMipBlit.dstOffsets[1].z = 1;
 
                 VkImageSubresourceRange firstMipSubRange = {};
@@ -784,7 +778,7 @@ namespace vks
 
                 // mipmap generation
                 // Copy down mips from n-1 to n
-                for (int32_t i = 1; i < mipLevels; i++)
+                for (int32_t i = 1; i < infos.mipLevels; i++)
                 {
                     VkImageBlit imageBlit{};
 
@@ -793,8 +787,8 @@ namespace vks
                     imageBlit.srcSubresource.layerCount = 1;
                     imageBlit.srcSubresource.mipLevel = i-1;
                     imageBlit.srcSubresource.baseArrayLayer = l;
-                    imageBlit.srcOffsets[1].x = int32_t(width >> (i - 1));
-                    imageBlit.srcOffsets[1].y = int32_t(height >> (i - 1));
+                    imageBlit.srcOffsets[1].x = int32_t(infos.extent.width >> (i - 1));
+                    imageBlit.srcOffsets[1].y = int32_t(infos.extent.height >> (i - 1));
                     imageBlit.srcOffsets[1].z = 1;
 
                     // Destination
@@ -802,8 +796,8 @@ namespace vks
                     imageBlit.dstSubresource.layerCount = 1;
                     imageBlit.dstSubresource.mipLevel = i;
                     imageBlit.dstSubresource.baseArrayLayer = l;
-                    imageBlit.dstOffsets[1].x = int32_t(width >> i);
-                    imageBlit.dstOffsets[1].y = int32_t(height >> i);
+                    imageBlit.dstOffsets[1].x = int32_t(infos.extent.width >> i);
+                    imageBlit.dstOffsets[1].y = int32_t(infos.extent.height >> i);
                     imageBlit.dstOffsets[1].z = 1;
 
                     VkImageSubresourceRange mipSubRange = {};
@@ -845,7 +839,7 @@ namespace vks
                         VK_PIPELINE_STAGE_TRANSFER_BIT);
                 }
                 //set layer ready for sampling
-                firstMipSubRange.levelCount = mipLevels;
+                firstMipSubRange.levelCount = infos.mipLevels;
                 vks::tools::setImageLayout(
                     blitFirstMipCmd,
                     image,
@@ -866,7 +860,7 @@ namespace vks
             samplerCI.mipLodBias = 0.0f;
             samplerCI.compareOp = VK_COMPARE_OP_NEVER;
             samplerCI.minLod = 0.0f;
-            samplerCI.maxLod = (float)mipLevels;
+            samplerCI.maxLod = (float)infos.mipLevels;
             samplerCI.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
             if (device->features.samplerAnisotropy)
             {
@@ -887,8 +881,8 @@ namespace vks
             viewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             viewCI.subresourceRange.baseMipLevel = 0;
             viewCI.subresourceRange.baseArrayLayer = 0;
-            viewCI.subresourceRange.layerCount = layerCount;
-            viewCI.subresourceRange.levelCount = mipLevels;
+            viewCI.subresourceRange.layerCount = infos.arrayLayers;
+            viewCI.subresourceRange.levelCount = infos.mipLevels;
             VK_CHECK_RESULT(vkCreateImageView(device->logicalDevice, &viewCI, nullptr, &view));
             updateDescriptor();
         }
@@ -937,10 +931,10 @@ namespace vks
             assert(!tex2DArray.empty());
 
             this->device = device;
-            width = static_cast<uint32_t>(tex2DArray.extent().x);
-            height = static_cast<uint32_t>(tex2DArray.extent().y);
-            layerCount = static_cast<uint32_t>(tex2DArray.layers());
-            mipLevels = static_cast<uint32_t>(tex2DArray.levels());
+            infos.extent.width = static_cast<uint32_t>(tex2DArray.extent().x);
+            infos.extent.height = static_cast<uint32_t>(tex2DArray.extent().y);
+            infos.arrayLayers = static_cast<uint32_t>(tex2DArray.layers());
+            infos.mipLevels = static_cast<uint32_t>(tex2DArray.levels());
 
             VkMemoryAllocateInfo memAllocInfo = vks::initializers::memoryAllocateInfo();
             VkMemoryRequirements memReqs;
@@ -977,9 +971,9 @@ namespace vks
             std::vector<VkBufferImageCopy> bufferCopyRegions;
             size_t offset = 0;
 
-            for (uint32_t layer = 0; layer < layerCount; layer++)
+            for (uint32_t layer = 0; layer < infos.arrayLayers; layer++)
             {
-                for (uint32_t level = 0; level < mipLevels; level++)
+                for (uint32_t level = 0; level < infos.mipLevels; level++)
                 {
                     VkBufferImageCopy bufferCopyRegion = {};
                     bufferCopyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -1006,15 +1000,15 @@ namespace vks
             imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
             imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            imageCreateInfo.extent = { width, height, 1 };
+            imageCreateInfo.extent = { infos.extent.width, infos.extent.height, 1 };
             imageCreateInfo.usage = imageUsageFlags;
             // Ensure that the TRANSFER_DST bit is set for staging
             if (!(imageCreateInfo.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
             {
                 imageCreateInfo.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
             }
-            imageCreateInfo.arrayLayers = layerCount;
-            imageCreateInfo.mipLevels = mipLevels;
+            imageCreateInfo.arrayLayers = infos.arrayLayers;
+            imageCreateInfo.mipLevels = infos.mipLevels;
 
             VK_CHECK_RESULT(vkCreateImage(device->logicalDevice, &imageCreateInfo, nullptr, &image));
 
@@ -1034,8 +1028,8 @@ namespace vks
             VkImageSubresourceRange subresourceRange = {};
             subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             subresourceRange.baseMipLevel = 0;
-            subresourceRange.levelCount = mipLevels;
-            subresourceRange.layerCount = layerCount;
+            subresourceRange.levelCount = infos.mipLevels;
+            subresourceRange.layerCount = infos.arrayLayers;
 
             vks::tools::setImageLayout(
                 copyCmd,
@@ -1077,7 +1071,7 @@ namespace vks
             samplerCreateInfo.anisotropyEnable = device->enabledFeatures.samplerAnisotropy;
             samplerCreateInfo.compareOp = VK_COMPARE_OP_NEVER;
             samplerCreateInfo.minLod = 0.0f;
-            samplerCreateInfo.maxLod = (float)mipLevels;
+            samplerCreateInfo.maxLod = (float)infos.mipLevels;
             samplerCreateInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
             VK_CHECK_RESULT(vkCreateSampler(device->logicalDevice, &samplerCreateInfo, nullptr, &sampler));
 
@@ -1087,8 +1081,8 @@ namespace vks
             viewCreateInfo.format = format;
             viewCreateInfo.components = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A };
             viewCreateInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-            viewCreateInfo.subresourceRange.layerCount = layerCount;
-            viewCreateInfo.subresourceRange.levelCount = mipLevels;
+            viewCreateInfo.subresourceRange.layerCount = infos.arrayLayers;
+            viewCreateInfo.subresourceRange.levelCount = infos.mipLevels;
             viewCreateInfo.image = image;
             VK_CHECK_RESULT(vkCreateImageView(device->logicalDevice, &viewCreateInfo, nullptr, &view));
 
@@ -1149,9 +1143,9 @@ namespace vks
             assert(!texCube.empty());
 
             this->device = device;
-            width = static_cast<uint32_t>(texCube.extent().x);
-            height = static_cast<uint32_t>(texCube.extent().y);
-            mipLevels = static_cast<uint32_t>(texCube.levels());
+            infos.extent.width = static_cast<uint32_t>(texCube.extent().x);
+            infos.extent.height = static_cast<uint32_t>(texCube.extent().y);
+            infos.mipLevels = static_cast<uint32_t>(texCube.levels());
 
             VkMemoryAllocateInfo memAllocInfo = vks::initializers::memoryAllocateInfo();
             VkMemoryRequirements memReqs;
@@ -1190,7 +1184,7 @@ namespace vks
 
             for (uint32_t face = 0; face < 6; face++)
             {
-                for (uint32_t level = 0; level < mipLevels; level++)
+                for (uint32_t level = 0; level < infos.mipLevels; level++)
                 {
                     VkBufferImageCopy bufferCopyRegion = {};
                     bufferCopyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -1213,12 +1207,12 @@ namespace vks
             VkImageCreateInfo imageCreateInfo = vks::initializers::imageCreateInfo();
             imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
             imageCreateInfo.format = format;
-            imageCreateInfo.mipLevels = mipLevels;
+            imageCreateInfo.mipLevels = infos.mipLevels;
             imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
             imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
             imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            imageCreateInfo.extent = { width, height, 1 };
+            imageCreateInfo.extent = { infos.extent.width, infos.extent.height, 1 };
             imageCreateInfo.usage = imageUsageFlags;
             // Ensure that the TRANSFER_DST bit is set for staging
             if (!(imageCreateInfo.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
@@ -1249,7 +1243,7 @@ namespace vks
             VkImageSubresourceRange subresourceRange = {};
             subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             subresourceRange.baseMipLevel = 0;
-            subresourceRange.levelCount = mipLevels;
+            subresourceRange.levelCount = infos.mipLevels;
             subresourceRange.layerCount = 6;
 
             vks::tools::setImageLayout(
@@ -1292,7 +1286,7 @@ namespace vks
             samplerCreateInfo.anisotropyEnable = device->enabledFeatures.samplerAnisotropy;
             samplerCreateInfo.compareOp = VK_COMPARE_OP_NEVER;
             samplerCreateInfo.minLod = 0.0f;
-            samplerCreateInfo.maxLod = (float)mipLevels;
+            samplerCreateInfo.maxLod = (float)infos.mipLevels;
             samplerCreateInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
             VK_CHECK_RESULT(vkCreateSampler(device->logicalDevice, &samplerCreateInfo, nullptr, &sampler));
 
@@ -1303,7 +1297,7 @@ namespace vks
             viewCreateInfo.components = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A };
             viewCreateInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
             viewCreateInfo.subresourceRange.layerCount = 6;
-            viewCreateInfo.subresourceRange.levelCount = mipLevels;
+            viewCreateInfo.subresourceRange.levelCount = infos.mipLevels;
             viewCreateInfo.image = image;
             VK_CHECK_RESULT(vkCreateImageView(device->logicalDevice, &viewCreateInfo, nullptr, &view));
 
